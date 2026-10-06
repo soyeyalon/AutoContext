@@ -183,6 +183,6 @@ Use of the AutoContext name and logo is subject to [TRADEMARKS.md](TRADEMARKS.md
 
 ## Source
 
-[github.com/2site-net/AutoContext](https://github.com/2site-net/AutoContext)
-— see [CONTRIBUTING.md](https://github.com/2site-net/AutoContext/blob/main/CONTRIBUTING.md)
+[github.com/soyeyalon/AutoContext](https://github.com/soyeyalon/AutoContext)
+— see [CONTRIBUTING.md](https://github.com/soyeyalon/AutoContext/blob/main/CONTRIBUTING.md)
 for contribution guidelines.

@@ -3,22 +3,22 @@
   "displayName": "AutoContext",
   "description": "AutoContext gives AI coding assistants the right context for your codebase. It provides built-in instructions, MCP tool checks, a dedicated tree view for managing them, and automatic context orchestration to deliver the right guidance and checks for the current task.",
   "version": "0.9.5",
-  "publisher": "2site-net",
+  "publisher": "alonsoft",
   "preview": true,
   "license": "AGPL-3.0-only",
   "author": {
     "name": "Eyal Alon",
-    "email": "autocontext@2site.net",
-    "url": "https://github.com/iam3yal"
+    "email": "autocontext@alonsoft.net",
+    "url": "https://github.com/soyeyalon"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/2site-net/AutoContext"
+    "url": "https://github.com/soyeyalon/AutoContext"
   },
   "bugs": {
-    "url": "https://github.com/2site-net/AutoContext/issues"
+    "url": "https://github.com/soyeyalon/AutoContext/issues"
   },
-  "homepage": "https://github.com/2site-net/AutoContext#readme",
+  "homepage": "https://github.com/soyeyalon/AutoContext#readme",
   "icon": "resources/logo.png",
   "galleryBanner": {
     "color": "#0F172A",
@@ -26,23 +26,23 @@
   },
   "badges": [
     {
-      "url": "https://vsmarketplacebadges.dev/version-short/2site-net.autocontext.png",
-      "href": "https://marketplace.visualstudio.com/items?itemName=2site-net.autocontext",
+      "url": "https://vsmarketplacebadges.dev/version-short/alonsoft.autocontext.png",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alonsoft.autocontext",
       "description": "Marketplace version"
     },
     {
-      "url": "https://vsmarketplacebadges.dev/installs-short/2site-net.autocontext.png",
-      "href": "https://marketplace.visualstudio.com/items?itemName=2site-net.autocontext",
+      "url": "https://vsmarketplacebadges.dev/installs-short/alonsoft.autocontext.png",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alonsoft.autocontext",
       "description": "Marketplace installs"
     },
     {
-      "url": "https://vsmarketplacebadges.dev/rating-short/2site-net.autocontext.png",
-      "href": "https://marketplace.visualstudio.com/items?itemName=2site-net.autocontext",
+      "url": "https://vsmarketplacebadges.dev/rating-short/alonsoft.autocontext.png",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alonsoft.autocontext",
       "description": "Marketplace rating"
     },
     {
-      "url": "https://github.com/2site-net/AutoContext/actions/workflows/ci.yml/badge.svg",
-      "href": "https://github.com/2site-net/AutoContext/actions/workflows/ci.yml",
+      "url": "https://github.com/soyeyalon/AutoContext/actions/workflows/ci.yml/badge.svg",
+      "href": "https://github.com/soyeyalon/AutoContext/actions/workflows/ci.yml",
       "description": "CI status"
     }
   ],

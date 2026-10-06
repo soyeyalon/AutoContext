@@ -39,4 +39,4 @@ For organizations with **more than 5 developers**, the following plans are avail
 
 ## Contact
 
-For licensing inquiries, contact [autocontext@2site.net](mailto:autocontext@2site.net).
+For licensing inquiries, contact [autocontext@alonsoft.net](mailto:autocontext@alonsoft.net).

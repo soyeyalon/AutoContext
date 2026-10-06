@@ -44,7 +44,7 @@ export class AgentPluginInstaller {
     /**
      * Marker substring used to identify pluginLocations entries that
      * belong to this extension. Derived from `extension.id`
-     * (e.g. `2site-net.autocontext`); each install folder is named
+     * (e.g. `alonsoft.autocontext`); each install folder is named
      * `<id>-<version>`, so the trailing hyphen anchors the match.
      */
     private readonly extensionInstallPrefix: string;

@@ -6,9 +6,9 @@ import { activatedExtension } from './helpers.js';
 
 suite('Extension Smoke Tests', () => {
     test('should be present as an installed extension', () => {
-        const ext = vscode.extensions.getExtension('2site-net.AutoContext');
+        const ext = vscode.extensions.getExtension('alonsoft.autocontext');
 
-        assert.ok(ext, 'Extension 2site-net.AutoContext not found');
+        assert.ok(ext, 'Extension alonsoft.autocontext not found');
     });
 
     test('should activate the extension', async () => {

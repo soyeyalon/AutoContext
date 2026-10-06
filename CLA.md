@@ -16,7 +16,7 @@ The Project Owner may also accept another clear written form of assent, such as 
 
 ## AutoContext Contributor License Agreement
 
-This Contributor License Agreement (the **"Agreement"**) is entered into by the individual or legal entity identified by the submission of a Contribution ("**You**"), in favor of **Eyal Alon** <<autocontext@2site.net>> (the **"Project Owner"**), for the benefit of the **AutoContext** project (the **"Project"**).
+This Contributor License Agreement (the **"Agreement"**) is entered into by the individual or legal entity identified by the submission of a Contribution ("**You**"), in favor of **Eyal Alon** <<autocontext@alonsoft.net>> (the **"Project Owner"**), for the benefit of the **AutoContext** project (the **"Project"**).
 
 By intentionally submitting a Contribution for inclusion in the Project, and by providing acceptance through the signing process described in this Agreement, You agree to the terms of this Agreement with respect to that Contribution and any future Contributions You intentionally submit to the Project.
 

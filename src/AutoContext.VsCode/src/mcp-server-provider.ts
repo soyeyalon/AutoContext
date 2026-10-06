@@ -6,7 +6,7 @@ import type { AutoContextConfig } from './autocontext-config.js';
 import type { ChannelLogger } from 'autocontext-nodejs-core';
 import type { McpServerProviderOptions } from '#types/mcp-server-provider-options.js';
 
-const extensionId = '2site-net.autocontext';
+const extensionId = 'alonsoft.autocontext';
 
 /**
  * Label of the single `McpStdioServerDefinition` this provider returns.

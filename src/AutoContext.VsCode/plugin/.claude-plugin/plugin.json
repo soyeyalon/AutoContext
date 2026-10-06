@@ -2,6 +2,6 @@
     "name": "autocontext",
     "description": "AutoContext agent-plugin: injects always-attached AutoContext instruction files into every chat session via a SessionStart hook, in addition to the chatInstructions manifest entries.",
     "author": {
-        "name": "2site.net"
+        "name": "AlonSoft"
     }
 }
