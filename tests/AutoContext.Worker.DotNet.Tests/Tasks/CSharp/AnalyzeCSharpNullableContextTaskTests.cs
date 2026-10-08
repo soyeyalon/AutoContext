@@ -2,6 +2,7 @@ namespace AutoContext.Worker.DotNet.Tests.Tasks.CSharp;
 
 using AutoContext.Framework.Tests.Support.Workers;
 using AutoContext.Worker.DotNet.Tasks.CSharp;
+using AutoContext.Worker.DotNet.Tests.Support.Tasks.CSharp;
 
 public sealed class AnalyzeCSharpNullableContextTaskTests
 {
@@ -222,5 +223,48 @@ public sealed class AnalyzeCSharpNullableContextTaskTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => new AnalyzeCSharpNullableContextTask().ExecuteAsync(new { content = (string?)null }));
+    }
+
+    [Fact]
+    public async Task Should_allow_the_null_forgiving_operator_in_a_test_class()
+    {
+        // Arrange — after an assertion, `!` states what the test has just proved.
+        var source = """
+            public sealed class ParserTests
+            {
+                [Fact]
+                public void Should_parse()
+                {
+                    var result = Parser.TryParse("x");
+                    Assert.NotNull(result);
+                    Assert.Equal("x", result!.Value);
+                }
+            }
+            """;
+
+        // Act
+        var (passed, _) = await new AnalyzeCSharpNullableContextTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.True(passed);
+    }
+
+    [Fact]
+    public async Task Should_allow_the_null_forgiving_operator_anywhere_in_a_test_project()
+    {
+        // Arrange — test-support helpers carry no [Fact] but are still test code.
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Test);
+        var source = """
+            internal static class Fixtures
+            {
+                public static string Read(string? value) => value!;
+            }
+            """;
+
+        // Act
+        var (passed, _) = await new AnalyzeCSharpNullableContextTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
+
+        // Assert
+        Assert.True(passed);
     }
 }

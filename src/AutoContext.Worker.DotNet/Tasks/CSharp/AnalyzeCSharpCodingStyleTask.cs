@@ -24,8 +24,13 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// "editorconfig.csharp_prefer_braces": "...",
 /// "editorconfig.dotnet_sort_system_directives_first": "...",
 /// "editorconfig.csharp_style_expression_bodied_methods": "...",
-/// "editorconfig.csharp_style_expression_bodied_properties": "..." }</c><br/>
-/// Response <c>output</c>: <c>{ "passed": &lt;bool&gt;, "report": "&lt;text&gt;" }</c>
+/// "editorconfig.csharp_style_expression_bodied_properties": "...",
+/// "filePath": "&lt;abs-path&gt;" }</c><br/>
+/// XML doc comments are required only on members visible outside the
+/// assembly — public or protected, inside types that are themselves visible —
+/// and only suggested in application projects, which publish no API.
+/// <c>filePath</c> (legacy <c>originalPath</c>) locates the project.<br/>
+/// Response <c>output</c>: <c>{ "passed", "report", "findings" }</c>
 /// </remarks>
 internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 {
@@ -57,8 +62,11 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         var expressionBodiedMethods = data.TryGetString("editorconfig.csharp_style_expression_bodied_methods");
         var expressionBodiedProperties = data.TryGetString("editorconfig.csharp_style_expression_bodied_properties");
 
+        var projectKind = CSharpProjectKindResolver.Resolve(data.TryGetString("filePath") ?? data.TryGetString("originalPath"));
+
         var findings = await AnalyzeAsync(
             content,
+            projectKind,
             bracePreference,
             sortSystemFirst,
             expressionBodiedMethods,
@@ -70,6 +78,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
     private static async Task<AnalyzerFindings> AnalyzeAsync(
         string content,
+        CSharpProjectKind projectKind,
         string bracePreference,
         bool sortSystemFirst,
         string? expressionBodiedMethods,
@@ -89,7 +98,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         AnalyzeDecorativeComments(contentSpan, lineRanges, findings);
         AnalyzeBlankLineBeforeControlFlow(root, tree, contentSpan, lineRanges, findings);
         AnalyzeExpressionBodyArrowPlacement(root, tree, findings);
-        AnalyzeXmlDocComments(root, tree, findings);
+        AnalyzeXmlDocComments(root, tree, projectKind, findings);
         AnalyzeCurlyBraces(root, tree, bracePreference, findings);
 
         if (sortSystemFirst)
@@ -360,23 +369,26 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         return block.Statements.FirstOrDefault() == node;
     }
 
-    // XML doc comments on public/protected members
+    // XML doc comments on members visible outside the assembly
     private static void AnalyzeXmlDocComments(
         SyntaxNode root,
         SyntaxTree tree,
+        CSharpProjectKind projectKind,
         AnalyzerFindings findings)
     {
+        var severity = projectKind == CSharpProjectKind.Application
+            ? AnalyzerFindingSeverity.Suggestion
+            : AnalyzerFindingSeverity.Violation;
+
         foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
-            if (TestDetection.IsTestClass(typeDecl))
+            // A member of a type nobody outside the assembly can see is not public API.
+            if (TestDetection.IsTestClass(typeDecl) || !IsVisibleOutsideAssembly(typeDecl))
             {
                 continue;
             }
 
-            if (IsPublicOrProtected(typeDecl))
-            {
-                AnalyzeMemberXmlDoc(typeDecl, tree, findings);
-            }
+            AnalyzeMemberXmlDoc(typeDecl, tree, severity, findings);
 
             foreach (var member in typeDecl.Members)
             {
@@ -397,24 +409,24 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     continue;
                 }
 
-                AnalyzeMemberXmlDoc(member, tree, findings);
+                AnalyzeMemberXmlDoc(member, tree, severity, findings);
             }
         }
 
         // Also check top-level enums and delegates
         foreach (var enumDecl in root.DescendantNodes().OfType<EnumDeclarationSyntax>())
         {
-            if (IsPublicOrProtected(enumDecl))
+            if (IsVisibleOutsideAssembly(enumDecl))
             {
-                AnalyzeMemberXmlDoc(enumDecl, tree, findings);
+                AnalyzeMemberXmlDoc(enumDecl, tree, severity, findings);
             }
         }
 
         foreach (var delegateDecl in root.DescendantNodes().OfType<DelegateDeclarationSyntax>())
         {
-            if (IsPublicOrProtected(delegateDecl))
+            if (IsVisibleOutsideAssembly(delegateDecl))
             {
-                AnalyzeMemberXmlDoc(delegateDecl, tree, findings);
+                AnalyzeMemberXmlDoc(delegateDecl, tree, severity, findings);
             }
         }
     }
@@ -422,6 +434,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
     private static void AnalyzeMemberXmlDoc(
         MemberDeclarationSyntax member,
         SyntaxTree tree,
+        AnalyzerFindingSeverity severity,
         AnalyzerFindings findings)
     {
         var hasXmlDoc = member.GetLeadingTrivia()
@@ -434,8 +447,12 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
         var line = tree.GetLineSpan(member.Span).StartLinePosition.Line + 1;
         var name = GetMemberDisplayName(member);
-        findings.Add("lang-csharp#INST0021", line, $"Public/protected member '{name}' is missing XML doc comment (/// <summary>).");
+        findings.Add("lang-csharp#INST0021", severity, line, $"Public/protected member '{name}' is missing XML doc comment (/// <summary>).");
     }
+
+    private static bool IsVisibleOutsideAssembly(MemberDeclarationSyntax member)
+        => IsPublicOrProtected(member)
+           && member.Ancestors().OfType<TypeDeclarationSyntax>().All(IsPublicOrProtected);
 
     private static bool IsPublicOrProtected(MemberDeclarationSyntax member)
     {

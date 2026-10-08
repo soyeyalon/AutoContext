@@ -2,6 +2,7 @@ namespace AutoContext.Worker.DotNet.Tests.Tasks.CSharp;
 
 using AutoContext.Framework.Tests.Support.Workers;
 using AutoContext.Worker.DotNet.Tasks.CSharp;
+using AutoContext.Worker.DotNet.Tests.Support.Tasks.CSharp;
 
 public sealed class AnalyzeCSharpCodingStyleTaskTests
 {
@@ -1981,5 +1982,76 @@ public sealed class AnalyzeCSharpCodingStyleTaskTests
 
         // Assert
         Assert.DoesNotContain("non-System using directives", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Should_not_require_xml_docs_on_members_of_an_internal_type()
+    {
+        // Arrange — a public member of an internal type is not visible outside the assembly.
+        var source = """
+            namespace MyApp;
+
+            internal sealed class Helper
+            {
+                public void Run() { }
+            }
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.Multiple(
+            () => Assert.True(passed),
+            () => Assert.DoesNotContain("XML doc", result, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Should_only_suggest_xml_docs_in_an_application()
+    {
+        // Arrange — an application publishes no API for others to read.
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Web);
+        var source = """
+            namespace MyApp;
+
+            /// <summary>Entry.</summary>
+            public sealed class Worker
+            {
+                public void Run() { }
+            }
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
+
+        // Assert
+        Assert.Multiple(
+            () => Assert.True(passed),
+            () => Assert.Contains("optional suggestion", result, StringComparison.Ordinal),
+            () => Assert.Contains("XML doc", result, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Should_require_xml_docs_on_public_api_of_a_library()
+    {
+        // Arrange
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Library);
+        var source = """
+            namespace MyLib;
+
+            /// <summary>Public API.</summary>
+            public sealed class Client
+            {
+                public void Send() { }
+            }
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
+
+        // Assert
+        Assert.Multiple(
+            () => Assert.False(passed),
+            () => Assert.Contains("'Send' is missing XML doc", result, StringComparison.Ordinal));
     }
 }

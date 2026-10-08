@@ -28,6 +28,13 @@ internal static class TestDetection
             .Any(HasTestAttribute);
 
     /// <summary>
+    /// Determines whether <paramref name="node"/> sits inside a test class,
+    /// directly or in a type nested within one.
+    /// </summary>
+    internal static bool IsInTestClass(SyntaxNode node)
+        => node.Ancestors().OfType<TypeDeclarationSyntax>().Any(IsTestClass);
+
+    /// <summary>
     /// Determines whether the given method has a known test attribute.
     /// </summary>
     internal static bool HasTestAttribute(MethodDeclarationSyntax method)

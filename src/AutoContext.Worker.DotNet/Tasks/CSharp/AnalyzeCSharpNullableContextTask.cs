@@ -17,8 +17,12 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// suppress warnings.
 /// </summary>
 /// <remarks>
-/// Request <c>data</c>:  <c>{ "content": "&lt;csharp-source&gt;" }</c><br/>
-/// Response <c>output</c>: <c>{ "passed": &lt;bool&gt;, "report": "&lt;text&gt;" }</c>
+/// Request <c>data</c>:  <c>{ "content": "&lt;csharp-source&gt;", "filePath": "&lt;abs-path&gt;" }</c><br/>
+/// The null-forgiving rule does not apply to test code — a test class, or any
+/// file in a test project (<c>filePath</c>, legacy <c>originalPath</c>, locates
+/// the project) — where <c>!</c> after an assertion is the idiomatic way to
+/// state what the test has just proved.<br/>
+/// Response <c>output</c>: <c>{ "passed", "report", "findings" }</c>
 /// </remarks>
 internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
 {
@@ -43,19 +47,26 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
+        var projectKind = CSharpProjectKindResolver.Resolve(data.TryGetString("filePath") ?? data.TryGetString("originalPath"));
+        var findings = await AnalyzeAsync(content, projectKind, cancellationToken).ConfigureAwait(false);
 
         return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(
+        string content,
+        CSharpProjectKind projectKind,
+        CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
         var findings = new AnalyzerFindings();
 
         AnalyzeNullableDisable(root, tree, findings);
-        AnalyzeNullForgivingOperator(root, tree, findings);
+        if (projectKind != CSharpProjectKind.Test)
+        {
+            AnalyzeNullForgivingOperator(root, tree, findings);
+        }
 
         return findings;
     }
@@ -90,7 +101,8 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
     {
         foreach (var expression in root.DescendantNodes().OfType<PostfixUnaryExpressionSyntax>())
         {
-            if (!expression.IsKind(SyntaxKind.SuppressNullableWarningExpression))
+            if (!expression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                || TestDetection.IsInTestClass(expression))
             {
                 continue;
             }

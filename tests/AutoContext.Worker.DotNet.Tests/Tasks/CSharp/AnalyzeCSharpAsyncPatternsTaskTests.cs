@@ -2,6 +2,7 @@ namespace AutoContext.Worker.DotNet.Tests.Tasks.CSharp;
 
 using AutoContext.Framework.Tests.Support.Workers;
 using AutoContext.Worker.DotNet.Tasks.CSharp;
+using AutoContext.Worker.DotNet.Tests.Support.Tasks.CSharp;
 
 public sealed class AnalyzeCSharpAsyncPatternsTaskTests
 {
@@ -223,7 +224,61 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
     [Fact]
     public async Task Should_reject_await_without_configure_await()
     {
-        // Arrange
+        // Arrange — ConfigureAwait(false) gates in library code.
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Library);
+        var source = """
+            public class MyService
+            {
+                public async Task LoadAsync(CancellationToken cancellationToken = default)
+                {
+                    await Task.Delay(100);
+                }
+            }
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
+
+        // Assert
+        Assert.Multiple(() =>
+        {
+            Assert.False(passed);
+            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.Contains("ConfigureAwait(false)", result, StringComparison.Ordinal);
+        });
+    }
+
+    [Theory]
+    [InlineData(CSharpProjectTestDirectory.Console)]
+    [InlineData(CSharpProjectTestDirectory.Web)]
+    [InlineData(CSharpProjectTestDirectory.Test)]
+    public async Task Should_not_ask_for_configure_await_outside_library_code(string projectXml)
+    {
+        // Arrange — applications and tests capture no context worth avoiding.
+        using var project = CSharpProjectTestDirectory.Create(projectXml);
+        var source = """
+            public class MyService
+            {
+                public async Task LoadAsync(CancellationToken cancellationToken = default)
+                {
+                    await Task.Delay(100);
+                }
+            }
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
+
+        // Assert
+        Assert.Multiple(
+            () => Assert.True(passed),
+            () => Assert.DoesNotContain("ConfigureAwait", result, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Should_only_suggest_configure_await_when_the_project_is_unknown()
+    {
+        // Arrange — without a path the check cannot tell library code from an application.
         var source = """
             public class MyService
             {
@@ -238,12 +293,10 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
         var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source });
 
         // Assert
-        Assert.Multiple(() =>
-        {
-            Assert.False(passed);
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
-            Assert.Contains("ConfigureAwait(false)", result, StringComparison.Ordinal);
-        });
+        Assert.Multiple(
+            () => Assert.True(passed),
+            () => Assert.Contains("optional suggestion", result, StringComparison.Ordinal),
+            () => Assert.Contains("ConfigureAwait(false)", result, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -270,7 +323,8 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
     [Fact]
     public async Task Should_reject_await_with_configure_await_true()
     {
-        // Arrange
+        // Arrange — ConfigureAwait(false) gates in library code.
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Library);
         var source = """
             public class MyService
             {
@@ -282,7 +336,7 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
             """;
 
         // Act
-        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
 
         // Assert
         Assert.Multiple(() =>
@@ -318,7 +372,8 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
     [Fact]
     public async Task Should_flag_multiple_configure_await_violations()
     {
-        // Arrange
+        // Arrange — ConfigureAwait(false) gates in library code.
+        using var project = CSharpProjectTestDirectory.Create(CSharpProjectTestDirectory.Library);
         var source = """
             public class MyService
             {
@@ -331,7 +386,7 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
             """;
 
         // Act
-        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source, filePath = project.SourcePath() });
 
         // Assert
         Assert.Multiple(() =>

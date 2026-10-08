@@ -14,12 +14,17 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// <c>analyze_csharp_async_patterns</c> — enforces async/await rules from
 /// <c>dotnet-async-await.instructions.md</c>: no <c>async void</c> (except
 /// event handlers), public async APIs require a <c>CancellationToken</c>
-/// parameter, and <c>await</c> expressions in non-test code must use
+/// parameter, and <c>await</c> expressions in library code must use
 /// <c>.ConfigureAwait(false)</c>.
 /// </summary>
 /// <remarks>
-/// Request <c>data</c>:  <c>{ "content": "&lt;csharp-source&gt;" }</c><br/>
-/// Response <c>output</c>: <c>{ "passed": &lt;bool&gt;, "report": "&lt;text&gt;" }</c>
+/// Request <c>data</c>:  <c>{ "content": "&lt;csharp-source&gt;", "filePath": "&lt;abs-path&gt;" }</c><br/>
+/// <c>filePath</c> (legacy <c>originalPath</c>) locates the project the file
+/// belongs to. <c>ConfigureAwait(false)</c> only matters where a caller may
+/// have captured a synchronization context, so it gates in a library, is
+/// skipped in an application or a test project, and is only suggested when
+/// the project cannot be determined.<br/>
+/// Response <c>output</c>: <c>{ "passed", "report", "findings" }</c>
 /// </remarks>
 internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
 {
@@ -44,12 +49,16 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
+        var projectKind = CSharpProjectKindResolver.Resolve(data.TryGetString("filePath") ?? data.TryGetString("originalPath"));
+        var findings = await AnalyzeAsync(content, projectKind, cancellationToken).ConfigureAwait(false);
 
         return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(
+        string content,
+        CSharpProjectKind projectKind,
+        CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
@@ -57,7 +66,7 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
 
         AnalyzeAsyncVoid(root, tree, findings);
         AnalyzeCancellationToken(root, tree, findings);
-        AnalyzeConfigureAwait(root, tree, findings);
+        AnalyzeConfigureAwait(root, tree, projectKind, findings);
 
         return findings;
     }
@@ -144,9 +153,18 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             _ => type.ToString(),
         };
 
-    // .ConfigureAwait(false) in non-test code
-    private static void AnalyzeConfigureAwait(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
+    // .ConfigureAwait(false) in library code
+    private static void AnalyzeConfigureAwait(
+        SyntaxNode root,
+        SyntaxTree tree,
+        CSharpProjectKind projectKind,
+        AnalyzerFindings findings)
     {
+        if (projectKind is CSharpProjectKind.Application or CSharpProjectKind.Test)
+        {
+            return;
+        }
+
         foreach (var awaitExpr in root.DescendantNodes().OfType<AwaitExpressionSyntax>())
         {
             var containingType = awaitExpr.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault();
@@ -162,9 +180,18 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(awaitExpr.Span).StartLinePosition.Line + 1;
-            findings.Add("dotnet-async-await#INST0006", line,
-                $"Awaited expression is missing '.ConfigureAwait(false)'. " +
-                "Use 'await someTask.ConfigureAwait(false)' in non-test code.");
+            if (projectKind == CSharpProjectKind.Library)
+            {
+                findings.Add("dotnet-async-await#INST0006", line,
+                    "Awaited expression is missing '.ConfigureAwait(false)'. " +
+                    "Use 'await someTask.ConfigureAwait(false)' in library code.");
+            }
+            else
+            {
+                findings.Suggest("dotnet-async-await#INST0006", line,
+                    "Awaited expression is missing '.ConfigureAwait(false)'. " +
+                    "This matters only in library code; pass the file's path so the check can tell.");
+            }
         }
     }
 

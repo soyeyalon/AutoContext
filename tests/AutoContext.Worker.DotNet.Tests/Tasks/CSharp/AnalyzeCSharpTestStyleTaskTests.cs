@@ -845,4 +845,29 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => new AnalyzeCSharpTestStyleTask().ExecuteAsync(new { content = (string?)null }));
     }
+
+    [Fact]
+    public async Task Should_not_require_the_suffix_on_a_nested_test_class()
+    {
+        // Arrange — nested classes group the tests of one member; the outer class names the unit.
+        var source = """
+            public sealed class UserServiceTests
+            {
+                public sealed class Create
+                {
+                    [Fact]
+                    public void Should_create_a_user()
+                    {
+                        Assert.True(true);
+                    }
+                }
+            }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.DoesNotContain("must be suffixed with 'Tests'", result, StringComparison.Ordinal);
+    }
 }

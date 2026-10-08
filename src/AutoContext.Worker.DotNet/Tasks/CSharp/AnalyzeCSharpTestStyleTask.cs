@@ -252,6 +252,13 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
     {
         var name = testClass.Identifier.Text;
 
+        // A test class nested inside another groups tests for one member of the
+        // unit (e.g. `UserServiceTests.Create`); only the outer class names the unit.
+        if (testClass.Parent is TypeDeclarationSyntax)
+        {
+            return;
+        }
+
         if (!name.EndsWith("Tests", StringComparison.Ordinal))
         {
             var line = tree.GetLineSpan(testClass.Identifier.Span).StartLinePosition.Line + 1;
