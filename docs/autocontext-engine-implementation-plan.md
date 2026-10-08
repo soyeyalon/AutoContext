@@ -3160,7 +3160,8 @@ produced by this repository yet, so neither can be verified here.
 
 ## Phase 14 — Extension and hook migration
 
-**Status**: Not started.
+**Status**: Not started. Gated on Phase 17: six of the engine's seven
+analyzer tools fail until it lands (see *Post-migration review*).
 
 | # | Commit subject | State |
 |---|---|---|
@@ -3622,351 +3623,427 @@ restate it).
   rename.
 
 **Out of scope**: emitting each file's obligations into
-`instructions-manifest.json` — Phase 17 is its first reader, so
-Phase 17 adds it (*just-in-time scaffolding*); validating the LM
+`instructions-manifest.json` — Phase 19 is its first reader, so
+Phase 19 adds it (*just-in-time scaffolding*); validating the LM
 discovery tools named outside the contracted sections; any change to
 the registry's own schema.
 
-## Phase 17 — Verification hooks
+## Post-migration review (2026-10-08)
 
-**Status**: Not started. Gated on Phases 14 and 16.
+Phases 17–21 were re-planned after measuring the premises the first
+draft rested on. Three findings reorder everything after Phase 16:
+
+1. **Six of the engine's seven analyzer tools cannot run.** The engine
+   sends the registered tool name to the worker as the task name
+   (`McpToolsInvoker.BuildRequestBytes`), but the workers register their
+   tasks under different names (`analyze_csharp_coding_style`,
+   `analyze_csharp_test_style`, `analyze_nuget_hygiene`,
+   `analyze_git_commit_format` + `_content`, `get_editorconfig_rules`,
+   `analyze_typescript_coding_style`), and the worker dispatcher answers
+   `Unknown task` for anything else. Only
+   `analyze_csharp_project_structure` works, because its two names
+   happen to match. The legacy server fanned each tool out to its tasks;
+   the engine registry dropped that mapping in Phase 7. Verified by
+   driving a staged engine over MCP stdio and calling every tool. No
+   test caught it: the end-to-end suites call a test-driver echo tool,
+   never a shipped one.
+2. **The checks are too noisy to run unattended.** Running the real
+   tasks over this repository (which builds clean under its own strict
+   analyzers) and over the stock `dotnet new` templates flagged 9 of 40
+   source files for coding style and 11 of 40 for member ordering, 10 of
+   15 test files for nullable use and 9 of 15 for test style, and 3 of
+   the 6 template files for coding style alone. The top hits are taste or context errors, not
+   bugs: the null-forgiving operator in tests, `Assert.Multiple` for any
+   two asserts, XML docs on public members of internal types, a
+   mandatory blank line before control flow, alphabetical member order,
+   expression-body arrow placement, `ConfigureAwait` in applications,
+   and TypeScript rules applied to plain JavaScript (the TS analyzer
+   parses `.js`/`.vue`/`.svelte` content as TypeScript). Every check
+   also reports the whole file, so a one-line edit inherits all of the
+   file's existing debt — against `copilot.instructions.md`'s own *don't
+   retrofit* rule.
+3. **Several first-draft premises were false.** Worker reports carry no
+   rule ids (the `[async-await INST0007]` tags are source comments), so
+   neither disabled rules nor per-rule filtering can be applied to
+   them; ConfigureAwait is not the only rule that ignores project
+   facts; the VS Code extension gives little without Copilot, because
+   Copilot's chat is what reads everything it contributes; the
+   always-attached text names VS Code LM-tool names
+   (`list_autocontext_instructions_files`, …) that the engine's MCP
+   server serves as `list_instructions`, `get_instructions`, …, so a
+   Claude Code agent is pointed at tools that do not exist; and the
+   prompt hook tells the agent today that "an automatic post-write hook
+   will remind you", while `hooks.json` registers no such hook.
+
+The phases below put correctness before reach and accuracy before
+automation. The exception is Claude Code support (Phase 20): its
+first two parts need neither the engine nor the checks, so they can
+ship before everything else here. The first draft's *workspace-authored instruction files*
+and *session usage report* are deferred at the end with the reasons.
+
+## Phase 17 — Make the checks callable and the guidance true
+
+**Status**: Not started. Gates Phase 14: the extension must not move
+onto an engine whose tools fail.
+
+| # | Commit subject | State |
+|---|---|---|
+| 1 | `test(engine): call every registered tool through the bundle` | TODO |
+| 2 | `fix(engine): fan each tool out to its worker tasks` | TODO |
+| 3 | `fix(hooks): stop promising a post-write hook` | TODO |
+| 4 | `docs(plan): mark Phase 17 complete` | TODO |
+
+**Commit grouping.** Row 1 lands first. Because no commit may be red,
+it asserts on the one shipped tool that already works
+(`analyze_csharp_project_structure`) and carries a skip list naming the
+six that fail, each with the reason; row 2 empties the skip list. Row 3 is
+independent and fixes text the shipping extension shows today.
+
+**Goal**: every tool the engine lists over MCP and `McpTools.List`
+returns a real report when called with valid arguments, and a test
+proves it for every registry entry, so a future rename on either side
+fails CI instead of the agent.
+
+**Code touch**:
+- `mcp-tools-registry.json` (+ schema): each tool declares the worker
+  task names it runs (`tasks: [...]`), mirroring what the legacy
+  `mcp-workers-registry.json` nested. A tool whose name is its single
+  task may omit the list.
+- `McpToolsInvoker`: invokes each task in order on the same worker,
+  merges the `{ passed, report }` outputs into one result (passed only
+  if all passed; reports concatenated under the task's heading), and
+  returns the first task error as the tool error.
+- Engine bundle smoke (`AutoContext.Engine.Tests`): for every registry
+  tool, a fixture argument set and an assertion that the result is the
+  `ok` arm. Fixtures live beside the test, one per tool.
+- `autocontext-user-prompt-submit.cts`: delete the post-write promise.
+  Phase 19 adds the hook and may restore a truthful sentence then.
+
+**Tests**: the bundle smoke above; invoker unit tests for fan-out,
+merge, first-error, and the single-task default.
+
+**Out of scope**: changing any check's rules (Phase 18).
+
+## Phase 18 — Check accuracy and structured findings
+
+**Status**: Not started. Independent of Phase 14; gates Phase 19.
+
+| # | Commit subject | State |
+|---|---|---|
+| 1 | `feat(workers-core): report structured findings` | TODO |
+| 2 | `test(worker-dotnet): pin the noise baseline` | TODO |
+| 3 | `fix(worker-dotnet): judge C# by the project's own facts` | TODO |
+| 4 | `fix(worker-web): stop applying TypeScript rules to JavaScript` | TODO |
+| 5 | `feat(engine): drop findings for disabled rules` | TODO |
+| 6 | `docs(plan): mark Phase 18 complete` | TODO |
+
+**Why this phase exists.** Phase 19 runs these checks on every edit.
+A check that flags correct code makes the agent rewrite correct code,
+which is worse than no check. The 2026-10-08 measurement above is the
+baseline this phase must beat.
+
+**Goal**:
+- Every finding is structured: `{ ruleId, file?, line, severity,
+  message }`, with `ruleId` the `<file-key>#INST####` the finding
+  enforces. The text report is rendered from it, so agents still read
+  prose.
+- Rules defer to what the project already says: `.editorconfig`
+  naming and style keys, the project's SDK and `OutputType` (scoping
+  ConfigureAwait to libraries), test-project detection (the
+  null-forgiving operator and multi-assert rules do not apply to test
+  code), and the containing type's visibility (no XML-doc demand on
+  members of internal types).
+- Rules that are taste rather than correctness ship at `severity:
+  suggestion` and never gate: blank line before control flow,
+  expression-body arrow placement, alphabetical member order,
+  `Assert.Multiple`, `Should_` test names.
+- The TypeScript analyzer parses by file kind and skips
+  annotation-only rules for JavaScript.
+- `McpTools.Invoke` drops findings whose `ruleId` the workspace has
+  disabled — the first point at which `disabledRules` reaches a tool,
+  as `architecture.md` § *Disable is granular* requires.
+
+**Acceptance**: rerun the measurement (this repository's `src/` and
+`tests/` samples plus the `webapi`, `worker`, `classlib`, `xunit` and
+`console` templates). No gating finding on any template file; gating
+findings on this repository only where a human reviewer agrees the code
+is wrong. The fixture set and the measurement script live in the
+worker test projects so the baseline is re-checkable.
+
+**Out of scope**: new rules.
+
+## Phase 19 — Verification hooks
+
+**Status**: Not started. Gated on Phases 14, 16, 17 and 18.
 
 | # | Commit subject | State |
 |---|---|---|
 | 1 | `feat(instructions-manifest-gen): emit each file's tool obligations` | TODO |
 | 2 | `feat(engine-core): serve Discovery.RouteForFile` | TODO |
 | 3 | `feat(engine-core): hold the per-session touched-file set` | TODO |
-| 4 | `feat(hooks): verify a file after every tool that writes it` | TODO |
-| 5 | `feat(hooks): refuse to end a turn with violations outstanding` | TODO |
-| 6 | `docs(plan): mark Phase 17 complete` | TODO |
+| 4 | `feat(hooks): report the violations an edit introduces` | TODO |
+| 5 | `feat(hooks): summarise outstanding violations at turn end` | TODO |
+| 6 | `refactor(instructions): stop mandating per-turn discovery calls` | TODO |
+| 7 | `docs(plan): mark Phase 19 complete` | TODO |
 
-**Why this phase exists.** Today every instruction file *asks* the
-agent to call its tools: "after editing any C# file, call
-`analyze_csharp_code_style` … treat any violation as blocking". The
-agent complies when it remembers, and skips when the edit looks
-small, the turn is long, or the context was compacted. The checks
-are the one part of AutoContext the model cannot reproduce from
-training, and they are the part most often left unrun. This phase
-moves the obligation from the agent's memory into the hook: the
-section still states the rule, the hook discharges it. It is the
-first phase whose deliverable is visible to a user as a change in
-what the agent *does*, not in how the engine is built.
+**Why this phase exists.** The instruction files *ask* the agent to run
+its checks; the agent skips them when the edit looks small or the
+context was compacted. Moving the obligation into the hook makes the
+checks run. With Phases 17 and 18 done, what they report is worth
+acting on.
 
-**Commit grouping.** Row 1 is the Phase 16 extraction, now emitted
-(`mcpTools: []` per manifest entry) because row 2 is its first
-reader. Row 2 adds the path-keyed route — the `applyTo` extension
-index already powers `RouteForPrompt`; this joins it to the new
-obligations. Row 3 is the only new engine state: a per-session set
-the stateless hook process cannot carry itself. Rows 4 and 5 are the
-two hooks; row 5 depends on row 3 and is kept separate because hosts
-differ in whether `Stop` can refuse a turn, so its behaviour needs
-its own tests and its own documentation.
-
-**Goal**: an edit to a workspace file triggers the checks its
-instruction files oblige, and the report reaches the agent in the
-same turn. A turn cannot end with a known violation outstanding on a
-host whose `Stop` hook can block.
-
-**Design anchors**: `§ Topology — motivating clients` (the
-`PostToolUse` verification role and the `Stop` backstop),
-`§ Discovery.*` (`RouteForFile`), `§ RPC surface` (`Agent.FileTouched`,
-`Agent.TouchedFiles`, `Agent.FilesVerified`), `§ Resource manifests`
-(per-file `mcpTools`).
+**Goal**: after a write, the agent sees the violations *its edit
+introduced*, in the same turn, and nothing else.
 
 **Code touch**:
-- `instructions-manifest-gen` emits `mcpTools` per manifest entry —
-  the tool names the Phase 16 validator already extracts from the
-  contracted sections. The engine's manifest snapshot carries them.
-- `Discovery.RouteForFile(path)` returns `{ instructions[], tools[] }`:
-  the enabled instruction files whose `applyTo` covers `path` (same
-  coarse/fine split as `Instructions.List`'s `applyTo` filter) and
-  the union of their `mcpTools`, minus disabled tools. Unknown
-  extensions yield empty arrays, not errors.
-- `Agent.FileTouched(sessionId, path)` (notification) adds to a
-  per-session set; `Agent.TouchedFiles(sessionId)` reads it;
-  `Agent.FilesVerified(sessionId)` clears it. The set is in-memory,
-  per engine instance, and dies with the engine — it is a backstop,
-  not a record.
-- `PostToolUse` hook, matched to the host's file-writing tools
-  (Claude Code: `Edit`, `Write`, `MultiEdit`; the Copilot hook host's
-  equivalents are resolved at phase open): reads the written path,
-  calls `RouteForFile`, invokes each obliged tool via
-  `McpTools.Invoke`, and emits violations as `additionalContext`.
-  Parameters are filled from the registry's declared parameter names
-  by convention — `content` from the file, `filePath` from the path,
-  `projectDirectory` from the nearest ancestor holding a project
-  file, `rootNamespace` left to the tool's own fallback; a tool
-  whose required parameters the hook cannot fill is skipped and
-  logged, never guessed.
-- `Stop` hook: reads `TouchedFiles`, re-runs the obliged tools, and
-  returns a block decision with the aggregated report when any fail;
-  on a clean run signals `FilesVerified`. Hosts without a blocking
-  `Stop` get the same report as context.
+- Manifest per-file `mcpTools` and `Discovery.RouteForFile(path)` as
+  the design describes; tool selection is per file, not a union — a
+  tool an instruction file scopes to test files runs only on test
+  files.
+- **Change-only reporting.** `PreToolUse` on a write tool captures the
+  file's pre-edit content (the session cache root, as sub-agent files
+  do); `PostToolUse` runs the obliged checks on both versions and
+  reports only findings whose `(ruleId, message)` is absent before the
+  edit. A new file has every finding new. Requires Phase 18's
+  structured findings.
+- `Stop` is **advisory by default**: it re-checks the touched files and
+  emits the outstanding introduced violations as context. Blocking the
+  turn is a per-workspace opt-in in `.autocontext.json`, off by
+  default.
+- Once routing is per file in the hook, `autocontext.instructions.md`
+  stops requiring `list`/`get` calls for every file on every turn
+  (tool calls the agent pays for in latency and context); discovery
+  stays available on demand.
 
-**Pre-flight decisions (resolve before the branch opens)**:
-1. Whether worker reports honour `disabledRules`. Today the dotnet
-   worker tags findings with rule ids (`[async-await INST0007]`) but
-   `McpTools.Invoke` does not pass the session's disabled set, so a
-   rule the user switched off is still reported by the tool that
-   enforces it. Verification makes this visible on every edit, so it
-   must be decided here: either `McpTools.Invoke` carries the
-   disabled rule ids and workers drop matching findings, or the hook
-   filters the report by tag. The first is correct by construction
-   (`architecture.md` § *Disable is granular*); the second is a
-   client-side projection the design forbids.
-2. The Copilot hook host's write-tool names and whether its `Stop`
-   can block. Both are host facts, not design facts.
+**Tests**: hook fixtures against a spawned engine — an edit introducing
+`async void` reports exactly that finding; an edit to a file with
+existing violations reports none of them; a `.js` edit runs no
+TypeScript-only rule; a test-file edit runs the test-style check and a
+non-test edit does not; `Stop` is advisory unless opted in.
 
-**Tests**:
-- Manifest round-trip: every shipped file's `mcpTools` equals the
-  set the validator extracts.
-- `RouteForFile` per fixture: a `.cs` path yields the C# files and
-  the three C# tools; a disabled tool is absent; an unknown extension
-  yields empty arrays.
-- Touched-file set: add, read, clear, per-session isolation, and
-  survival across `TurnEnded`.
-- Hook fixtures against a spawned engine: a C# edit introducing
-  `async void` produces a report naming the rule; a TypeScript edit
-  with `any` likewise; a path no file covers produces no tool call;
-  `Stop` blocks while a violation stands and passes once it is fixed.
-- A disabled rule is not reported (per pre-flight decision 1).
+**Out of scope**: whole-workspace audits (a CLI verb); auto-fixing.
 
-**Out of scope**: running checks on files the agent did not write
-(a whole-workspace audit is a CLI verb, see
-`future/autocontext-cli.md`); auto-fixing; any host-specific tool
-registration.
+## Phase 20 — Claude Code support
 
-## Phase 18 — Project-aware checks
+The first draft treated Claude Code as one late phase, gated on the
+end of the engine migration. That left Claude Code users with nothing
+until Phase 15, although most of what they need does not depend on the
+engine at all. Claude Code natively reads path-scoped rule files —
+`.claude/rules/*.md` whose `paths:` frontmatter holds globs, loaded
+when Claude touches a matching file — which is the same model as
+AutoContext's `applyTo` instruction files. It also loads plugin skills
+on demand by description, ships plugins that bundle hooks and MCP
+servers, and runs the hooks format AutoContext's plugin already uses.
+What it does **not** document is a way to ship per-platform native
+binaries with a plugin.
 
-**Status**: Not started. Independent of Phases 14–17.
+So the work splits by dependency. 20A ships on today's extension with
+no engine. 20B is text and can land any time. 20C needs the engine's
+checks to work (Phase 17) and the hooks to dial the engine (Phase 14,
+rows 11–13), but not the end of the migration.
+
+Checked in code 2026-10-08: every surface the extension contributes
+(`contributes.chatInstructions`, `vscode.lm.registerTool`, the MCP
+server definition provider, `chat.pluginLocations`) is read by Copilot
+only, so a Claude Code session — even inside VS Code with the extension
+installed — receives no AutoContext instructions and no AutoContext
+tools.
+
+### Phase 20A — Export to Claude Code rules
+
+**Status**: Not started. Independent; ships on the current extension.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `fix(worker-dotnet): enforce ConfigureAwait only where a context can be captured` | TODO |
-| 2 | `fix(instructions): scope the ConfigureAwait rule to libraries` | TODO |
-| 3 | `docs(plan): mark Phase 18 complete` | TODO |
+| 1 | `feat(vscode): export instructions as Claude Code rules` | TODO |
+| 2 | `feat(vscode): export workflow guidance as Claude Code skills` | TODO |
+| 3 | `docs(vscode): document the Claude Code export` | TODO |
+| 4 | `docs(plan): mark Phase 20A complete` | TODO |
 
-**Why this phase exists.** A check that fires on code the project's
-own configuration permits is a false gate, and Phase 17 will run
-every check on every edit. The worst offender today is
-`dotnet-async-await` INST0006: `.ConfigureAwait(false)` is required
-on every `await` outside test code, but ASP.NET Core, worker
-services, and console applications have no synchronization context
-to capture — the call is noise there, and the analyzer reports it on
-every edit. The other checks already defer to the project where it
-speaks: the registry lists the `.editorconfig` keys each tool honours
-(`csharp_prefer_braces`, `csharp_style_namespace_declarations`, …)
-and `read_editorconfig_rules` resolves them per file. The audit
-behind this phase found ConfigureAwait to be the one remaining rule
-that depends on a project fact no check reads.
+**Why this phase exists.** It is the largest gain for the least work:
+the files exist, the user's disabled rules are already applied to
+them, and Claude Code already knows how to load them only when they
+are relevant — at no context cost until a matching file is touched.
 
-**Goal**: the ConfigureAwait check reads the nearest project file
-and enforces INST0006 only where a captured context is possible — a
-library (`OutputType` absent or `Library`) that is not a test
-project. Web SDK projects (`Microsoft.NET.Sdk.Web`,
-`Microsoft.NET.Sdk.BlazorWebAssembly`, `Microsoft.NET.Sdk.Worker`),
-`Exe`/`WinExe` outputs, and test projects are skipped, and the report
-says which fact silenced the rule so the agent does not add the calls
-by hand.
-
-**Design anchors**: `architecture.md` § *Follows your `.editorconfig`*
-extended to project facts; `§ What the engine absorbs` (workers stay
-transient and self-contained — the project lookup lives in the
-worker, next to the `.editorconfig` lookup it already does, not in
-the engine).
+**Goal**: from the Instructions view's export action, a user picks
+*Claude Code* as the target and gets one rule file per selected
+instruction file, scoped to the same files its `applyTo` names.
 
 **Code touch**:
-- `Worker.DotNet/Tasks/CSharp/AnalyzeCSharpAsyncPatternsTask` reads
-  the project kind from the nearest `*.csproj` above `filePath` (SDK
-  attribute and `OutputType`); without a `filePath` the rule keeps
-  today's behaviour. A small `ProjectKindResolver` beside
-  `TestDetection` owns the lookup.
-- `dotnet-async-await.instructions.md` INST0006 states the scope the
-  check enforces, so the rule and the tool agree.
+- `instructions-files-exporter.ts` gains a target choice
+  (*Copilot* — today's `.github/instructions/` — or *Claude Code*).
+  The Claude Code target reads the same per-window generated copy the
+  Copilot export reads (disabled rules removed, rule ids stripped,
+  frontmatter kept) and rewrites the frontmatter: `applyTo` becomes a
+  `paths:` list, one entry per comma-separated glob (brace groups kept
+  if `paths:` accepts them, otherwise expanded — the extension's own
+  `applyTo` handling only comma-splits, so expansion is new code that
+  mirrors the engine's `applyTo` parser); `name` and `description` are kept; a
+  generated-by marker records the source file, its version, and its
+  content hash so a later sync can tell a stale or hand-edited copy
+  from a current one.
+- Files with no `applyTo` — the workflow guidance (`code-review`,
+  `git-commit`, `design-principles`, `rest-api-design`; `testing` is
+  scoped to test files and exports as a rule) —
+  would load unconditionally as rules. They export instead as skills
+  (`.claude/skills/<key>/SKILL.md`), whose existing `description`
+  ("Apply when drafting a git commit message…") is exactly what a skill
+  needs to be picked on demand.
+- The always-attached files (`copilot`, `autocontext`) are **not**
+  exported: their text is Copilot-specific until 20B.
+- `## MCP Tool Validation` sections are dropped from the exported
+  copy. They name the legacy server's tools, which a Claude Code
+  session cannot call; pointing the agent at missing tools is the
+  failure Phase 16 exists to prevent. 20C restores them once the
+  engine serves Claude Code.
+- An exported Claude Code file is a snapshot, not an override: the
+  overrides watcher does not read `.claude/`, so AutoContext's toggles
+  do not reach it after export. Re-exporting updates it; the marker
+  lets the export warn before overwriting a hand-edited copy.
 
-**Tests**:
-- Fixtures per project kind: library flags, web SDK skips, `Exe`
-  skips, test project skips, no project file keeps today's behaviour.
-- The skip reason appears in the report.
-- Shipped corpus: INST0006's text and the task's rule comment cite
-  the same scope.
+**Pre-flight decisions (check the Claude Code memory and skills docs at
+phase open)**: whether `paths:` takes a list and brace globs (if not,
+one glob per entry after expansion); whether rule files in a
+subdirectory (`.claude/rules/autocontext/`) are read (if not, a flat
+`autocontext-<key>.md` prefix); and whether project skills live under
+`.claude/skills/`.
 
-**Out of scope**: new checks; reading `Directory.Build.props`
-inheritance (the nearest project file is enough for the SDK and
-`OutputType`; a later phase can widen it if a fixture proves the
-need).
+**Tests**: frontmatter rewrite fixtures for single globs, comma lists,
+and brace groups; a disabled rule is absent from the export; tool
+sections are dropped; workflow files land as skills; always-attached
+files are skipped; the overwrite prompt fires on a hand-edited copy.
 
-## Phase 19 — Host independence
+**Out of scope**: automatic re-export on toggle (a later sync
+feature); anything that needs the engine.
 
-**Status**: Not started. Gated on Phases 14 and 15.
+### Phase 20B — Host-neutral always-attached guidance
+
+**Status**: Not started. Independent.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `docs(vscode): make Copilot optional` | TODO |
-| 2 | `build(scripts): package the agent plugin as its own release` | TODO |
-| 3 | `docs: install AutoContext without VS Code` | TODO |
-| 4 | `docs(plan): mark Phase 19 complete` | TODO |
+| 1 | `fix(instructions): name discovery tools every host serves` | TODO |
+| 2 | `refactor(instructions): split host policy from shared guidance` | TODO |
+| 3 | `docs(plan): mark Phase 20B complete` | TODO |
 
-**Why this phase exists.** The extension README lists GitHub Copilot
-as a requirement. Only the LM-tool and chat-instruction surfaces need
-it; the sidebar, the configuration file, exports, the engine, and the
-MCP server work without it, and the hooks run under Claude Code with
-no VS Code at all. The design already says hosts are interchangeable;
-the packaging and the README do not. Phase 13 left the plugin
-release layout unproduced because nothing consumed it; after Phase 14
-the hooks dial the engine and the plugin is a real distribution.
+**Why this phase exists.** The two always-attached files are written
+for Copilot. `autocontext.instructions.md` names the VS Code LM-tool
+names (`list_autocontext_instructions_files`, …), while the engine's MCP
+server — the only discovery surface Claude Code can reach — serves
+`list_instructions`, `get_instructions`, `search_instructions_by_*`.
+`copilot.instructions.md` mixes guidance any agent needs (instruction
+precedence, how to discover rules) with one host's policy.
 
-**Goal**: a user can install AutoContext for Claude Code without VS
-Code, and a VS Code user without Copilot sees the extension work for
-everything but the Copilot chat surfaces, with the README saying
-exactly that.
-
-**Design anchors**: `§ Topology — motivating clients` (hosts are
-interchangeable), `§ Distribution` / `§ Distributed bundle layout`
-(the plugin root carries `engine/`), `§ Pitfalls — Engine bootstrap
-is the chicken-and-egg`.
+**Goal**: one always-attached text that is true on every host, plus
+host policy that is clearly separate (and, per Phase 21, opt-in).
 
 **Code touch**:
-- `src/AutoContext.VsCode/README.md`: requirements split into
-  *always* (VS Code 1.100+) and *for in-editor agent use* (Copilot
-  Chat); a section pointing MCP clients and Claude Code at the
-  engine.
-- `scripts/package.ps1` / `AutoContext.Build`: a `Plugin` target
-  that stages `plugin/` (manifest, `hooks/`, `scripts/`) plus the
-  per-RID `engine/` bundle into a release tarball per platform, next
-  to the VSIX targets; `publish.ps1` uploads them as GitHub release
-  assets.
-- Root `README.md`: an install path per host.
+- The engine serves the discovery tools under one name set on every
+  surface; the VS Code LM-tool registrations are renamed to the MCP
+  names, so the text can name them once. Phase 16's validator extends
+  to the discovery-tool section once there is a single name set.
+- `copilot.instructions.md` splits into a host-neutral always-attached
+  file and a Copilot-specific one; the neutral file is what 20A and 20C
+  may hand to Claude Code.
 
-**Pre-flight decision**: how Claude Code sources a plugin that ships
-prebuilt binaries (a marketplace manifest pointing at a release
-asset, or a local-install script). Check the current plugin
-documentation at phase open; the layout above works for either, so
-only the manifest step depends on it.
+**Tests**: the validator covers the discovery-tool names; a fixture
+proves both hosts' tool lists contain every name the neutral text
+cites.
 
-**Tests**:
-- A packaged plugin tarball starts its bundled engine and answers
-  `Engine.Hello` (reuse the Phase 13 bundle smoke).
-- The extension smoke suite passes with the Copilot extension absent.
-- README claims are checked by the smoke suite, not by prose review:
-  every surface the README says works without Copilot is exercised
-  without it.
+### Phase 20C — Claude Code plugin with the engine
 
-**Out of scope**: the marketplace listing itself (operational);
-host-specific hook-host detection (the design says none).
-
-## Phase 20 — Workspace-authored instruction files
-
-**Status**: Not started. The engine rows are independent; the view
-row is gated on Phase 14.
+**Status**: Not started. Gated on Phase 17 (callable checks) and Phase
+14 rows 11–13 (hooks dial the engine). The standalone release row is
+additionally gated on Phase 15.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `feat(engine-core): serve workspace-authored instruction files` | TODO |
-| 2 | `feat(engine-core): validate workspace-authored files on load` | TODO |
-| 3 | `feat(vscode): show workspace-authored files in the Instructions view` | TODO |
-| 4 | `docs(plan): mark Phase 20 complete` | TODO |
+| 1 | `feat(plugin): declare the engine's MCP server` | TODO |
+| 2 | `feat(vscode): register the plugin with Claude Code` | TODO |
+| 3 | `build(scripts): release the plugin with its engine` | TODO |
+| 4 | `docs: install AutoContext for Claude Code` | TODO |
+| 5 | `docs(plan): mark Phase 20C complete` | TODO |
 
-**Why this phase exists.** The bundled corpus is generic by
-construction: it says how C# should be written, not how *this*
-repository writes it. Models already know the generic part; what
-they lack is the project's own conventions, and those are what a
-team most wants enforced. Today the overrides watcher inventories
-every `*.instructions.md` under a configured override root, but the
-inventory is joined to the bundled manifest by basename: a file whose
-name matches a bundled file shadows it, and a file with a new name
-has nothing to join to, so it is not part of AutoContext's context at
-all (verify the exact drop point at phase open). A team cannot add a
-rule without shadowing a built-in. The projection, rule-id, and
-rule-level disable machinery already exist; this phase lets a
-workspace's own files into it.
-
-**Goal**: a file under an override root whose name matches no
-bundled file is a *workspace-authored* instruction file. It is
-parsed, projected, searchable, and rule-level toggleable exactly like
-a bundled one, surfaces in `Instructions.List` with
-`source: workspace`, and is covered by `applyTo` routing and (after
-Phase 17) by verification when it names tools.
-
-**Design anchors**: `§ Projection ownership`, `§ Authority model`,
-`architecture.md` § *Overrides* (precedence stays one-directional; an
-authored file is not merged with anything either), `§ Pitfalls —
-Override survival across upgrades`.
+**Goal**: a Claude Code session gets the same instructions, discovery
+tools, checks, and (after Phase 19) verification a Copilot session
+gets.
 
 **Code touch**:
-- `InstructionsOverridesWatcher` + the manifest snapshot: a
-  non-matching file becomes a snapshot entry with no bundled
-  counterpart; `InstructionsBodyProjector` and
-  `InstructionsFullTextSearchService` need no change beyond the entry
-  existing. Rule ids are file-scoped already (`INST0001` exists in
-  every bundled file), so an authored file reuses the numbering
-  without collision; its own ids must still be unique within it.
-- Load-time validation reuses the parser's diagnostics and the
-  cross-file reference resolver; a file that fails is served with a
-  `status: invalid` row and its diagnostics, not dropped silently.
-- The tree view groups workspace-authored files under their own node
-  with their own icon; toggle and rule-disable behave as for bundled
-  files, and *Show Original* is absent because there is none.
+- `plugin.json` declares the engine in its MCP-server role
+  (`--workspace` from the project directory, `--mcp-server
+  with-stdio`), its command resolved against `${CLAUDE_PLUGIN_ROOT}`.
+- **Inside VS Code** (row 2): the extension already ships the engine
+  per platform, so it registers its plugin directory with Claude Code
+  the way it registers it with Copilot through `chat.pluginLocations`;
+  no download is involved. This is the path for users like this
+  repository's maintainer, who run Claude Code in VS Code.
+- **Standalone** (row 3, after Phase 15): a release asset per platform
+  carries `plugin/` plus that platform's `engine/`. Because plugins
+  have no documented binary channel, the plugin's first SessionStart
+  fetches and verifies the platform's engine into the plugin's data
+  directory unless one is already present.
+- With the engine reachable, the 20A export keeps the tool-validation
+  sections (now naming engine tools), and the hooks serve
+  always-attached and routed instructions directly.
+- The extension README states that its in-editor agent features need
+  either Copilot Chat or Claude Code, and how to enable each.
 
-**Tests**:
-- A new-name file appears in `Instructions.List` with
-  `source: workspace`; a matching-name file is still an override.
-- Rule-level disable on an authored file projects correctly.
-- A malformed authored file is reported, not dropped, and does not
-  affect the bundled snapshot.
-- Deleting the file removes the entry on the next reload.
+**Pre-flight decisions**: how Claude Code registers a local plugin
+directory non-interactively (for row 2), and whether a hook may
+download into the plugin data directory on first run (for row 3) —
+both from the plugin docs at phase open.
 
-**Out of scope**: learning conventions from the repository
-automatically (a later phase, if ever; this one gives humans the
-seam); exporting an authored file back into the bundle.
+**Tests**: a packaged plugin starts its engine and answers `tools/list`
+with the discovery tools the neutral text names; the Phase 17 bundle
+smoke runs against the plugin layout; the extension's registration is
+idempotent and removed on uninstall.
 
-## Phase 21 — Session usage report
+## Phase 21 — Context cost
 
-**Status**: Not started. Gated on Phase 17.
+**Status**: Not started. Measurement row is independent; the
+reduction rows follow Phases 14 and 19.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `feat(engine-core): tally per-session usage from Agent.* events` | TODO |
-| 2 | `feat(engine-core): serve Diagnostics.Run session reports` | TODO |
-| 3 | `feat(vscode): show the session report` | TODO |
+| 1 | `test(hooks): measure the context AutoContext injects` | TODO |
+| 2 | `fix(hooks): inject the always-attached files once` | TODO |
+| 3 | `refactor(instructions): make host policy opt-in` | TODO |
 | 4 | `docs(plan): mark Phase 21 complete` | TODO |
 
-**Why this phase exists.** Nothing today records which of the 79
-instruction files an agent fetched, which tools ran, or which
-verifications failed. Without that, every curation decision —
-merging the thin files, retiring a check nobody triggers, promoting a
-rule the agent keeps violating — is a guess. Phase 10 deferred the
-`ToolUsed` histogram to the phase that first reads it; this is that
-phase, widened to the events Phase 17 adds.
+**Why this phase exists.** Every token AutoContext adds displaces the
+user's own code from the agent's context. Measured 2026-10-08: the two
+always-attached files are about 10 KB, injected twice in VS Code (once
+by `contributes.chatInstructions`, once by the SessionStart hook), plus
+a discovery block on every prompt. Nothing measures or bounds this.
+`copilot.instructions.md` also imposes one maintainer's working
+policy on every user — `pwsh` commands, *act immediately*, git
+restrictions — and declares itself senior to the user's own guidance.
 
-**Goal**: `Diagnostics.Run({ sessionId })` returns, per session: the
-instruction files routed and fetched, the tools invoked with
-pass/fail counts, the files verified, and the rules reported, as a
-structured report any client can render. The VS Code tree view shows
-the current session's report under a *Session* node.
+**Goal**: a budget test fails when the injected context grows past an
+agreed size; each always-attached file reaches the agent once; host
+policy that is preference rather than safety moves behind a
+`.autocontext.json` opt-in.
 
-**Design anchors**: `§ RPC surface` (`Agent.*`, `Diagnostics.Run`),
-`§ P6` (the report is a read, not a subscription — a client that
-wants live updates already has `Agent.Events.Subscribe`).
+**Tests**: the budget test; a SessionStart + prompt fixture counts one
+copy of each always-attached file.
 
-**Code touch**:
-- `AgentSessionUsageTally` (the deferred histogram, renamed for what
-  it now holds) fed from `ToolUsed`, `FileTouched`, `FilesVerified`,
-  and from the `RouteFor*` / `Instructions.Get` handlers when the
-  request carries a `sessionId` (hooks pass it; LM-tool calls do not,
-  and are tallied as `session: unknown`).
-- `Diagnostics.Run` handler and DTOs; one report shape, rendered by
-  the tree view and printable by the future CLI.
-- The tally is in-memory and per engine instance; a session ends
-  when the engine does. Persisting history is out of scope.
+## Deferred
 
-**Tests**:
-- Each event family increments the right counter; unknown sessions
-  are isolated; the report round-trips over the pipe.
-- The tree view renders a fixture report.
-
-**Out of scope**: cross-session aggregation; telemetry of any kind
-leaving the machine.
+- **Workspace-authored instruction files.** The premise holds — the
+  overrides watcher inventories new-name files but
+  `InstructionsListProjector.Project` only iterates manifest entries, so
+  they are never served. The value does not: the default override root
+  `.github/instructions/` is a folder VS Code Copilot already reads
+  natively with `applyTo`, Claude Code has its own project rules, and
+  `copilot.instructions.md` ranks itself above workspace guidance. What
+  the phase would add — rule-level disable and search over team files —
+  is small next to Phases 17–21. Revisit after Phase 21, together with
+  the precedence rule.
+- **Session usage report.** Its purpose was curation data, which needs
+  history across sessions, and the design keeps the tally in memory for
+  one engine lifetime. It serves the maintainer, not the user. Phase
+  21's measurement covers the user-facing cost question; a curation
+  report can return when there is a design for retaining data.
 
 ## Cross-phase concerns
 
@@ -3986,22 +4063,31 @@ leaving the machine.
   flipped. Phases 16–21 are post-migration surface work: they change
   what AutoContext does for a user, not how the engine is built, and
   they are ordered by what they depend on rather than by number.
-- **Phase 16 (corpus-to-registry contract) and Phase 18
-  (project-aware checks) depend on nothing above** and can land
-  before Phase 14. Phase 16 goes first because every later phase that
-  runs a tool on the agent's behalf trusts the corpus to name that
-  tool correctly.
-- **Phase 17 (verification hooks) cannot ship before Phases 14 and
-  16.** The hooks dial the engine only after Phase 14, and the
-  obligations they discharge are only trustworthy after Phase 16.
-- **Phase 19 (host independence) cannot ship before Phase 15.** A
-  plugin release that carries `engine/` must be the only binary
-  payload; while `servers/` is still an input to the bundle there is
-  nothing clean to ship.
-- **Phase 20 (workspace-authored files)** engine rows are
-  independent; its view row waits for Phase 14.
-- **Phase 21 (session report) cannot ship before Phase 17**, which
-  produces most of the events it tallies.
+- **Phase 17 (callable checks) gates Phase 14.** Six of the engine's
+  seven analyzer tools fail with `Unknown task` today; migrating the
+  extension onto the engine before they are fixed would ship an
+  extension whose checks do not run. Row 3 of Phase 17 (the false
+  post-write promise) is independent and can land immediately.
+- **Phase 18 (check accuracy) depends on nothing above** and can land
+  before Phase 14. It gates Phase 19: automating checks that flag
+  correct code makes the agent worse.
+- **Phase 19 (verification hooks) cannot ship before Phases 14, 16, 17
+  and 18.** The hooks dial the engine only after Phase 14; the
+  obligations are trustworthy after 16, callable after 17, and worth
+  acting on after 18, whose structured findings change-only reporting
+  needs.
+- **Phase 20A (Claude Code rules export) and 20B (host-neutral
+  guidance) depend on nothing above** and can land now, on the current
+  extension. **20C (Claude Code plugin with the engine)** needs Phase 17
+  and Phase 14 rows 11–13; only its standalone release row waits for
+  Phase 15, because a plugin release that carries `engine/` must be the
+  only binary payload and `servers/` is still an input to the bundle
+  until then.
+- **Phase 21 (context cost)**: the measurement row is independent; the
+  single-injection row follows Phase 14 (which drops
+  `chatInstructions`), and the per-turn discovery reduction lives in
+  Phase 19.
+
 - **The shipped extension folder empties in 14 → 15 order, and not
   before.** Measured on `features/extension-migration` (2026-07-28):
   `servers/` is still how the extension resolves the MCP binary and

@@ -153,10 +153,16 @@ Two motivating clients, two jobs:
     (c) **verification** — when the tool wrote a workspace file, the
     hook calls `Discovery.RouteForFile(path)` for the instruction
     files whose `applyTo` covers that path and the MCP tools those
-    files oblige, invokes each obliged tool through
-    `McpTools.Invoke` on the file's current content, and emits any
-    violations as `additionalContext` so the agent sees the report
-    in the same turn it made the edit. Parameters are filled from
+    files oblige (selected per file: a tool an instruction file
+    scopes to test files runs only on test files), invokes each
+    obliged tool through `McpTools.Invoke` on the file's pre-edit
+    content (captured by `PreToolUse`) and on its current content,
+    and emits only the findings the edit **introduced** — those
+    whose `(ruleId, message)` is absent before the edit — as
+    `additionalContext`, so the agent sees what it caused in the
+    same turn and is never pushed to rewrite debt it did not
+    touch. This needs structured findings from the workers; a
+    whole-file report is not enough. Parameters are filled from
     the registry's declared parameter names by convention
     (`content` from the file, `filePath` from the path,
     `projectDirectory` from the nearest ancestor holding a project
@@ -169,12 +175,13 @@ Two motivating clients, two jobs:
     obligation, the hook discharges it.
   - **`Stop`** — fires when the agent finishes its turn. The hook
     reads `Agent.TouchedFiles(sessionId)`, re-runs the obliged tools
-    over every file still in the set, and — on a host whose `Stop`
-    hook can refuse the turn — returns a block decision carrying the
-    aggregated report, so a turn cannot end with a known violation
-    outstanding. A clean run signals `Agent.FilesVerified(sessionId)`,
-    which clears the set. Hosts whose `Stop` cannot refuse still get
-    the `PostToolUse` feedback; the backstop is additive. The hook
+    over every file still in the set, and emits the introduced
+    violations still outstanding as context. The backstop is
+    **advisory by default**: refusing the turn is a per-workspace
+    opt-in in `.autocontext.json`, honoured only on hosts whose
+    `Stop` hook can refuse, because a blocking gate on imperfect
+    checks makes the agent "fix" correct code. A clean run signals
+    `Agent.FilesVerified(sessionId)`, which clears the set. The hook
     then flushes any session-scoped client cache it owns, signals
     `Agent.TurnEnded(sessionId)` to the engine, and releases any
     keep-alive grip the hook held on the engine pipe so the
@@ -3594,7 +3601,14 @@ mutating the manifests.
   Each tool's `description` and `parameters` are the model-facing
   contract surfaced over MCP `tools/list`; its `workerId` is the
   source-of-truth dispatch target the engine uses for
-  `McpTools.Invoke` (Issue #8). It holds no activation or UI concerns
+  `McpTools.Invoke` (Issue #8). A tool name is **not** a worker task
+  name: each tool lists the worker tasks it runs (`tasks`), and
+  `McpTools.Invoke` fans out to them and merges their findings, as
+  the legacy server's nested registry did. Dropping that mapping in
+  the move to a flat registry left six of seven tools answering
+  `Unknown task`, unnoticed because no test called a shipped tool
+  end to end; the bundle smoke suite must therefore call every
+  registered tool (plan Phase 17). It holds no activation or UI concerns
   — those live in the catalog. Schema-validated at build time against
   the sibling `mcp-tools-registry.schema.json`; the schema file ships
   alongside the registry so external tooling (CI lint, IDE
@@ -4121,13 +4135,17 @@ Shape:
   there is no in-hook disk-read fallback (engine and plugin
   ship versioned together inside the plugin root).
 - **Post-migration surface.** With the engine the only reader, the
-  work turns to what the agent experiences: the corpus's tool
-  obligations are validated against the registry at build time; the
-  `PostToolUse` / `Stop` hooks discharge those obligations
-  automatically; checks read the project before judging it; a
-  workspace can author its own instruction files; the plugin ships
-  for hosts without VS Code; and the engine reports what each
-  session actually used.
+  work turns to what the agent experiences, correctness before
+  reach and accuracy before automation: the corpus's tool
+  obligations are validated against the registry at build time;
+  every registered tool is proven callable end to end; checks
+  report structured findings and read the project before judging
+  it; the `PostToolUse` / `Stop` hooks then report the violations
+  an edit introduced; Claude Code is served natively — the corpus
+  exports to its path-scoped rules and on-demand skills, the
+  always-attached text names discovery tools every host serves, and
+  the plugin carries the engine as its MCP server; and the context
+  AutoContext injects is measured and bounded.
 
 ## Companion documents
 
