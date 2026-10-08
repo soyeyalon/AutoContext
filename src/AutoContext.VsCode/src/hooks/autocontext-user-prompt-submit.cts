@@ -341,7 +341,7 @@ function renderRoutedBlock(match: PromptMatch): string {
         lines.push(`Strongly relevant instruction files: ${match.instructions.map(n => `\`${n}\``).join(', ')}.`);
         lines.push('');
         lines.push(
-            `Use \`get_autocontext_instructions_file\` to fetch any of them before writing code. If you write any file this turn, an automatic post-write hook will remind you to run the matching MCP tool.`,
+            `Use \`get_autocontext_instructions_file\` to fetch any of them before writing code, and run the MCP tools their \`## MCP Tool Validation\` sections name on every file you write.`,
         );
     }
 
