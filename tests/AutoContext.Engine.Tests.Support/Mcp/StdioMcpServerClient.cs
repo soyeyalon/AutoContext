@@ -92,11 +92,50 @@ public static class StdioMcpServerClient
                 executablePath);
         }
 
+        return await ConnectAsync(
+            executablePath,
+            BuildArguments(workspacePath, resourcesRootOverride, cacheRootOverride),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Spawns the <em>staged bundle's</em> engine in the stdio MCP-server role
+    /// — the shipped layout, with its own side-cars and real workers — and
+    /// returns a connected <see cref="McpClient"/>. Use this to prove what a
+    /// host actually gets; <see cref="CreateAsync"/> runs the build-output
+    /// binary, whose workers are not staged beside it.
+    /// </summary>
+    /// <param name="workspacePath">Absolute workspace path.</param>
+    /// <param name="cacheRootOverride">Optional <c>--cache-root</c> override;
+    /// <see langword="null"/> uses the default cache root.</param>
+    /// <param name="cancellationToken">Token that bounds process spawn and the
+    /// initialize handshake.</param>
+    /// <returns>The connected client.</returns>
+    /// <exception cref="DirectoryNotFoundException">The bundle has not been
+    /// staged.</exception>
+    public static async Task<McpClient> CreateFromBundleAsync(
+        string workspacePath,
+        string? cacheRootOverride,
+        CancellationToken cancellationToken)
+    {
+        EngineBundlePath.RequireStaged();
+
+        return await ConnectAsync(
+            EngineBundlePath.Executable,
+            BuildArguments(workspacePath, resourcesRootOverride: null, cacheRootOverride),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<McpClient> ConnectAsync(
+        string executablePath,
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken)
+    {
         var transport = new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = "autocontext-engine (mcp-server smoke)",
             Command = executablePath,
-            Arguments = [.. BuildArguments(workspacePath, resourcesRootOverride, cacheRootOverride)],
+            Arguments = [.. arguments],
         });
 
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken)
