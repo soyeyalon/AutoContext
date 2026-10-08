@@ -175,6 +175,44 @@ public sealed class AnalyzeCSharpProjectStructureTaskTests
     }
 
     [Fact]
+    public async Task Should_ask_to_move_a_type_declared_beside_top_level_statements()
+    {
+        // Arrange — Program.cs is named for the program; renaming it after the record would be wrong.
+        var source = """
+            var app = WebApplication.Create(args);
+            app.Run();
+
+            record WeatherForecast(int TemperatureC);
+            """;
+
+        // Act
+        var (passed, result) = await new AnalyzeCSharpProjectStructureTask().GetReportAsync(new Dictionary<string, object> { ["content"] = source, ["filePath"] = "Program.cs" });
+
+        // Assert
+        Assert.Multiple(() =>
+        {
+            Assert.False(passed);
+            Assert.Contains("Move it to its own file, 'WeatherForecast.cs'", result, StringComparison.Ordinal);
+            Assert.DoesNotContain("Rename the file", result, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public async Task Should_pass_a_file_of_top_level_statements_alone()
+    {
+        // Arrange
+        var source = """
+            Console.WriteLine("Hello, World!");
+            """;
+
+        // Act
+        var (passed, _) = await new AnalyzeCSharpProjectStructureTask().GetReportAsync(new Dictionary<string, object> { ["content"] = source, ["filePath"] = "Program.cs" });
+
+        // Assert
+        Assert.True(passed);
+    }
+
+    [Fact]
     public async Task Should_reject_file_name_mismatch()
     {
         // Arrange

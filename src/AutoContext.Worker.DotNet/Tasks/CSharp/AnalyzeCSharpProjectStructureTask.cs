@@ -118,6 +118,21 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
     {
         var topLevelTypes = CollectTopLevelTypes(root);
 
+        // Top-level statements are the file's own type (the program's entry point), so any
+        // declared type beside them is a second type that belongs in a file of its own.
+        if (HasTopLevelStatements(root))
+        {
+            foreach (var type in topLevelTypes)
+            {
+                var name = GetTypeName(type);
+                findings.Add("dotnet-coding-standards#INST0017", null,
+                    $"Type '{name}' is declared alongside top-level statements. " +
+                    $"Move it to its own file, '{name}.cs'.");
+            }
+
+            return;
+        }
+
         if (topLevelTypes.Count <= 1)
         {
             return;
@@ -141,8 +156,9 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
         var topLevelTypes = CollectTopLevelTypes(root);
 
         // Only check file name when there is exactly one type; multi-type files
-        // are already covered by AnalyzeSingleTypePerFile.
-        if (topLevelTypes.Count != 1)
+        // are already covered by AnalyzeSingleTypePerFile. A file with top-level
+        // statements is named for the program, not for a type it declares.
+        if (topLevelTypes.Count != 1 || HasTopLevelStatements(root))
         {
             return;
         }
@@ -186,6 +202,10 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
 
         return types;
     }
+
+    private static bool HasTopLevelStatements(SyntaxNode root)
+        => root is CompilationUnitSyntax compilationUnit
+           && compilationUnit.Members.OfType<GlobalStatementSyntax>().Any();
 
     private static string GetTypeName(MemberDeclarationSyntax member)
         => member switch
