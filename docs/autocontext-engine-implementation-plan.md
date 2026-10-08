@@ -3765,55 +3765,122 @@ code it reports a missing blank line and alphabetical member order.
 
 ## Phase 18 — Check accuracy and structured findings
 
-**Status**: Not started. Independent of Phase 14; gates Phase 19.
+**Status**: Completed on branch `features/extension-migration`. Phase 19
+is no longer blocked by it.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `feat(workers-core): report structured findings` | TODO |
-| 2 | `test(worker-dotnet): pin the noise baseline` | TODO |
-| 3 | `fix(worker-dotnet): judge C# by the project's own facts` | TODO |
-| 4 | `fix(worker-web): stop applying TypeScript rules to JavaScript` | TODO |
-| 5 | `feat(engine): drop findings for disabled rules` | TODO |
-| 6 | `docs(plan): mark Phase 18 complete` | TODO |
+| 1 | `feat(workers-core): report structured findings` | DONE |
+| 2 | `feat(worker-web): report structured findings` | DONE |
+| 3 | `fix(worker-dotnet): judge C# by the project's own facts` | DONE |
+| 4 | `fix(worker-dotnet): demote taste rules to suggestions` | DONE |
+| 5 | `fix(worker-web): judge sources by their kind` | DONE |
+| 6 | `feat(engine): drop findings for disabled rules` | DONE |
+| 7 | `test(worker-dotnet): hold the stock templates clean` | DONE |
+| 8 | `fix(worker-dotnet): stop flagging idiomatic C#` | DONE |
+| 9 | `docs(plan): mark Phase 18 complete` | DONE |
 
-**Why this phase exists.** Phase 19 runs these checks on every edit.
-A check that flags correct code makes the agent rewrite correct code,
-which is worse than no check. The 2026-10-08 measurement above is the
-baseline this phase must beat.
+**Commit grouping.** Structured findings came first, because every
+later row is a change to a finding's severity or presence and reads far
+better against a model that carries rule and severity than against
+report strings. The context fixes (row 3) and the demotions (row 4) are
+separate so a reviewer can disagree with a demotion without reopening a
+correctness fix. Row 7 is the acceptance test; row 8 fixes what running
+the checks over this repository's own code exposed after it.
 
-**Goal**:
-- Every finding is structured: `{ ruleId, file?, line, severity,
-  message }`, with `ruleId` the `<file-key>#INST####` the finding
-  enforces. The text report is rendered from it, so agents still read
-  prose.
-- Rules defer to what the project already says: `.editorconfig`
-  naming and style keys, the project's SDK and `OutputType` (scoping
-  ConfigureAwait to libraries), test-project detection (the
-  null-forgiving operator and multi-assert rules do not apply to test
-  code), and the containing type's visibility (no XML-doc demand on
-  members of internal types).
-- Rules that are taste rather than correctness ship at `severity:
-  suggestion` and never gate: blank line before control flow,
-  expression-body arrow placement, alphabetical member order,
-  `Assert.Multiple`, `Should_` test names.
-- The TypeScript analyzer parses by file kind and skips
-  annotation-only rules for JavaScript.
-- `McpTools.Invoke` drops findings whose `ruleId` the workspace has
-  disabled — the first point at which `disabledRules` reaches a tool,
-  as `architecture.md` § *Disable is granular* requires.
+**Why this phase existed.** Phase 19 runs these checks on every edit. A
+check that flags correct code makes the agent rewrite correct code.
 
-**Acceptance**: rerun the measurement (this repository's `src/` and
-`tests/` samples plus the `webapi`, `worker`, `classlib`, `xunit` and
-`console` templates). No gating finding on any template file; gating
-findings on this repository only where a human reviewer agrees the code
-is wrong. The fixture set and the measurement script live in the
-worker test projects so the baseline is re-checkable.
+**As built**:
+- **Structured findings.** `Workers.Core/Analysis/AnalyzerFindings` (and
+  a TypeScript twin in `Worker.Web/src/analysis`) collects every finding
+  as `{ ruleId, severity, line?, message }` and renders the task output
+  `{ passed, report, findings }`. The report text keeps the shape agents
+  already read; suggestions follow under their own heading and never
+  change `passed`. Messages carry no line numbers, so a finding reads
+  the same wherever it moves — what Phase 19's change-only matching on
+  `(ruleId, message)` needs. The engine's multi-task merge concatenates
+  findings in task order.
+- **Rule ids, and the drift they exposed.** A finding's `ruleId` is
+  `<instructions-file-key>#INST####`, the form a file uses to cite a
+  rule, or `editorconfig#<key>` for a check driven by an
+  `.editorconfig` setting. Mapping every check to its rule showed the
+  worker tags had drifted when the corpus was renumbered: the interface
+  prefix, extension suffix, async suffix and one-type-per-file checks
+  and most test-style checks cited neighbouring rules. Each now cites
+  the rule it enforces, the stale comment tags are gone, and
+  `ShippedInstructionsRoundTripTests.WorkerRuleIds` fails the build when
+  a worker cites a rule the corpus does not define.
+- **Project facts.** `CSharpProjectKindResolver` classifies the nearest
+  `*.csproj` above `filePath` as library, application (`Exe`/`WinExe`
+  or a web/worker/Blazor WebAssembly SDK), or test (`IsTestProject` or a
+  test-framework package, checked first because xUnit v3 test projects
+  are executables). ConfigureAwait gates in libraries, is skipped in
+  applications and tests, and is a suggestion asking for the path when
+  the project is unknown. XML docs are required only on members visible
+  outside the assembly, are a suggestion in applications, and are not
+  required in test projects. The null-forgiving operator is allowed in
+  test code. Nested test classes need no `Tests` suffix, and a class
+  that only groups nested test classes counts as a test class. The
+  async-await guidance (both corpus copies) now scopes INST0006 to
+  library code, so rule and check agree.
+- **Taste rules are suggestions.** C#: blank line before control flow,
+  expression-body arrow placement, alphabetical order within a member
+  group, `Assert.Multiple`, the `Should_` prefix. TypeScript: type
+  assertions, non-null assertions, unconstrained generics, `enum`, and
+  object `type` aliases. Order by kind, access and static still gates.
+- **TypeScript by file kind.** The tool takes an optional `filePath`
+  (registry and engine corpus updated; the legacy `originalPath` is
+  honoured). `.tsx`/`.jsx` parse with JSX; JavaScript skips the
+  return-type rules it cannot satisfy; other kinds (`.vue`, `.svelte`)
+  are not analysed and the report says so.
+- **Disabled rules reach the checks.** `McpToolsInvoker` sends the
+  workspace's disabled rules with every task (`disabledRules`: rule ids,
+  or a bare file key for a wholly disabled file); both worker
+  dispatchers pass them into task data, and the collectors drop matching
+  findings before rendering. A check whose only violations are disabled
+  passes. The first draft's pre-flight question — filter in the worker
+  or in the hook — is answered: in the worker, which is correct by
+  construction for every client.
+- **Misread C#** (row 8): `else if` chains no longer need braces on the
+  `else`; `DisposeAsync()`, explicit interface implementations and
+  `Main` are not asked for a `CancellationToken`; a type declared beside
+  top-level statements is told to move to its own file instead of the
+  file being told to rename itself after it.
 
-**Out of scope**: new rules.
+**Acceptance — measured 2026-10-08** with the engine's real tools and
+`filePath`, on the same samples as the baseline:
+
+| Sample | Files failing a check, before | After |
+|---|---|---|
+| This repository's source (40 files) | about half | 3 |
+| This repository's tests (15 files) | 10 or more | 1 |
+| This repository's TypeScript (25 files) | 5 | 0 |
+
+Every remaining finding is a genuine departure from the corpus's own
+rules (static members after instance members; XML docs on a test
+class). `StockTemplatesTests` holds the `dotnet new` `webapi`, `worker`,
+`classlib`, `xunit` and `console` templates to failing only on
+conventions the corpus deliberately adds — XML docs on a library's
+public API, test classes named after the unit under test, one type per
+file — each listed with its reason.
+
+**Not done here** (recorded so they are not mistaken for done):
+- The git commit-message checks (`Worker.Workspace`) still report text
+  only, and their rule tags have drifted the same way the C# ones had.
+  They were not part of the noise problem; giving them structured
+  findings and correct ids is a small follow-up.
+- Private-field naming still ignores `.editorconfig` naming rules; no
+  sampled file tripped it.
+- The project lookup reads only the nearest project file, not
+  `Directory.Build.props`.
+- `editorconfig#…` findings cannot be disabled through
+  `disabledRules`; the user changes the `.editorconfig` setting instead.
 
 ## Phase 19 — Verification hooks
 
-**Status**: Not started. Gated on Phases 14, 16, 17 and 18.
+**Status**: Not started. Gated on Phase 14; its other gates, Phases 16,
+17 and 18, are complete.
 
 | # | Commit subject | State |
 |---|---|---|
@@ -4106,9 +4173,9 @@ copy of each always-attached file.
   the engine's seven analyzer tools answered `Unknown task` before it;
   migrating the extension onto the engine then would have shipped an
   extension whose checks did not run.
-- **Phase 18 (check accuracy) depends on nothing above** and can land
-  before Phase 14. It gates Phase 19: automating checks that flag
-  correct code makes the agent worse.
+- **Phase 18 (check accuracy) gated Phase 19**, and is complete:
+  automating checks that flag correct code would have made the agent
+  worse.
 - **Phase 19 (verification hooks) cannot ship before Phases 14, 16, 17
   and 18.** The hooks dial the engine only after Phase 14; the
   obligations are trustworthy after 16, callable after 17, and worth
