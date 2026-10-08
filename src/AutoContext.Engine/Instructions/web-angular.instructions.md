@@ -12,8 +12,9 @@ applyTo: "**/*.{ts,mts,cts,html}"
 
 After editing or generating any TypeScript or JavaScript source file,
 call the `analyze_typescript_code_style` MCP tool on the changed
-source. Pass the file contents as `content`. Treat any reported
-violation as blocking — fix it before reporting the work as done.
+source. Pass the file contents as `content` and the file's absolute
+path as `filePath`. Treat any reported violation as blocking — fix it
+before reporting the work as done.
 
 ## Rules
 

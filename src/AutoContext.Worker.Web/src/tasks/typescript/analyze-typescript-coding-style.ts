@@ -5,6 +5,18 @@ import { AnalyzerFindings } from '../../analysis/analyzer-findings.js';
 const PASS_TEXT = 'TypeScript coding style is correct.';
 const VIOLATION_NOUN = 'TypeScript coding style';
 
+/** How each source extension is parsed; anything else is not analysed. */
+const SCRIPT_KINDS: Readonly<Record<string, ts.ScriptKind>> = {
+    '.ts': ts.ScriptKind.TS,
+    '.mts': ts.ScriptKind.TS,
+    '.cts': ts.ScriptKind.TS,
+    '.tsx': ts.ScriptKind.TSX,
+    '.js': ts.ScriptKind.JS,
+    '.mjs': ts.ScriptKind.JS,
+    '.cjs': ts.ScriptKind.JS,
+    '.jsx': ts.ScriptKind.JSX,
+};
+
 /**
  * `analyze_typescript_coding_style` — enforces coding-style rules from
  * `lang-typescript.instructions.md`: no `any`, no enums, no `@ts-ignore`,
@@ -13,7 +25,18 @@ const VIOLATION_NOUN = 'TypeScript coding style';
  * `type` for object shapes, and explicit return types on exported
  * functions. Each finding names the rule it enforces.
  *
- * Request `data`:   `{ "content": "<typescript-source>" }`
+ * The source is parsed by its file kind (`filePath`, legacy `originalPath`):
+ * `.tsx` and `.jsx` with JSX, JavaScript without the rules that need type
+ * annotations it cannot have. Files of any other kind — a `.vue` or
+ * `.svelte` component, say — are not TypeScript source and are not analysed.
+ * Without a path the source is treated as TypeScript.
+ *
+ * Rules that are a matter of taste rather than correctness — type
+ * assertions, non-null assertions, unconstrained generics, `enum`, and
+ * `type` aliases for object shapes — are reported as suggestions and do
+ * not fail the check.
+ *
+ * Request `data`:   `{ "content": "<typescript-source>", "filePath": "<abs-path>" }`
  * Response `output`: `{ "passed": <bool>, "report": "<text>", "findings": [...] }`
  */
 export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
@@ -33,10 +56,41 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             throw new Error("'data.content' must not be empty or whitespace.");
         }
 
-        const findings = AnalyzeTypeScriptCodingStyleTask.analyze(content);
+        const filePath = AnalyzeTypeScriptCodingStyleTask.readPath(data);
+        const extension = filePath === undefined ? '.ts' : AnalyzeTypeScriptCodingStyleTask.extensionOf(filePath);
+        const scriptKind = SCRIPT_KINDS[extension];
+
+        if (scriptKind === undefined) {
+            return new AnalyzerFindings().toOutput(
+                `Nothing to check: '${extension || filePath}' files are not TypeScript or JavaScript source.`,
+                VIOLATION_NOUN,
+            );
+        }
+
+        const findings = AnalyzeTypeScriptCodingStyleTask.analyze(content, extension, scriptKind);
         signal.throwIfAborted();
 
         return findings.toOutput(PASS_TEXT, VIOLATION_NOUN);
+    }
+
+    private static readPath(data: Record<string, unknown>): string | undefined {
+        for (const key of ['filePath', 'originalPath']) {
+            const value = data[key];
+            if (typeof value === 'string' && value.trim().length > 0) {
+                return value;
+            }
+        }
+        return undefined;
+    }
+
+    private static extensionOf(filePath: string): string {
+        const name = filePath.replace(/\\/g, '/').split('/').pop() ?? '';
+        const dot = name.lastIndexOf('.');
+        return dot <= 0 ? '' : name.slice(dot).toLowerCase();
+    }
+
+    private static isTypeScript(sourceFile: ts.SourceFile): boolean {
+        return !/\.(?:m|c)?jsx?$/.test(sourceFile.fileName);
     }
 
     private static lineOf(sourceFile: ts.SourceFile, pos: number): number {
@@ -75,13 +129,13 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
         }
     }
 
-    private static analyze(content: string): AnalyzerFindings {
+    private static analyze(content: string, extension: string, scriptKind: ts.ScriptKind): AnalyzerFindings {
         const sourceFile = ts.createSourceFile(
-            'input.ts',
+            `input${extension}`,
             content,
             ts.ScriptTarget.Latest,
             true,
-            ts.ScriptKind.TS,
+            scriptKind,
         );
 
         const findings = new AnalyzerFindings();
@@ -94,7 +148,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
         const lineOf = AnalyzeTypeScriptCodingStyleTask.lineOf;
 
         if (ts.isEnumDeclaration(node)) {
-            findings.add(
+            findings.suggest(
                 'lang-typescript#INST0011',
                 lineOf(sourceFile, node.getStart(sourceFile)),
                 'Prefer a `const` object with `as const` and a derived union type instead of `enum`.',
@@ -140,14 +194,18 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             node.type.members.length > 0
         ) {
             const name = node.name.getText(sourceFile);
-            findings.add(
+            findings.suggest(
                 'lang-typescript#INST0010',
                 lineOf(sourceFile, node.getStart(sourceFile)),
                 `Use \`interface ${name}\` instead of \`type ${name} = { ... }\` for object shapes.`,
             );
         }
 
+        // Return-type annotations exist only in TypeScript; JavaScript cannot satisfy them.
+        const typed = AnalyzeTypeScriptCodingStyleTask.isTypeScript(sourceFile);
+
         if (
+            typed &&
             ts.isFunctionDeclaration(node) &&
             AnalyzeTypeScriptCodingStyleTask.hasExportModifier(node) &&
             !node.type
@@ -160,7 +218,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             );
         }
 
-        if (ts.isVariableStatement(node) && AnalyzeTypeScriptCodingStyleTask.hasExportModifier(node)) {
+        if (typed && ts.isVariableStatement(node) && AnalyzeTypeScriptCodingStyleTask.hasExportModifier(node)) {
             for (const decl of node.declarationList.declarations) {
                 const init = decl.initializer;
                 if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && !init.type) {
@@ -174,7 +232,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             }
         }
 
-        if (ts.isExportAssignment(node) && !node.isExportEquals) {
+        if (typed && ts.isExportAssignment(node) && !node.isExportEquals) {
             const expr = node.expression;
             if ((ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) && !expr.type) {
                 findings.add(
@@ -187,7 +245,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
 
         if (ts.isTypeParameterDeclaration(node) && !node.constraint) {
             const name = node.name.getText(sourceFile);
-            findings.add(
+            findings.suggest(
                 'lang-typescript#INST0009',
                 lineOf(sourceFile, node.getStart(sourceFile)),
                 `Generic type parameter \`${name}\` should be constrained with \`extends\`.`,
@@ -195,7 +253,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
         }
 
         if (ts.isAsExpression(node) && !AnalyzeTypeScriptCodingStyleTask.isConstAssertion(node.type)) {
-            findings.add(
+            findings.suggest(
                 'lang-typescript#INST0018',
                 lineOf(sourceFile, node.getStart(sourceFile)),
                 'Avoid type assertions (`as`) — narrow with `typeof`, `instanceof`, `in`, or type guards instead.',
@@ -203,7 +261,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
         }
 
         if (ts.isNonNullExpression(node)) {
-            findings.add(
+            findings.suggest(
                 'lang-typescript#INST0019',
                 lineOf(sourceFile, node.getStart(sourceFile)),
                 'Avoid non-null assertions (`!`) — verify nullability with a proper check or type guard.',

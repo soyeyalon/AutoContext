@@ -46,11 +46,12 @@ describe('AnalyzeTypeScriptCodingStyleTask', () => {
         expect.soft(report).toContain('any');
     });
 
-    it('flags enum', async () => {
+    it('suggests replacing enum without failing the check', async () => {
         const { passed, report } = await run(`
             enum Direction { Up, Down }
         `);
-        expect.soft(passed).toBe(false);
+        expect.soft(passed).toBe(true);
+        expect.soft(report).toContain('optional suggestion');
         expect.soft(report).toContain('enum');
     });
 
@@ -79,12 +80,13 @@ describe('AnalyzeTypeScriptCodingStyleTask', () => {
         expect.soft(report).toContain('{}');
     });
 
-    it('flags as type assertions but not as const', async () => {
-        const { report: withAs } = await run(`
+    it('suggests narrowing over as type assertions but not as const', async () => {
+        const { passed: passedAs, report: withAs } = await run(`
             declare const x: unknown;
             const y = x as string;
         `);
-        expect.soft(withAs).toMatch(/^❌/);
+        expect.soft(passedAs).toBe(true);
+        expect.soft(withAs).toContain('optional suggestion');
         expect.soft(withAs).toContain('as');
 
         const { passed: passedConst } = await run(`
@@ -126,6 +128,49 @@ describe('AnalyzeTypeScriptCodingStyleTask', () => {
         expect(output.findings).toEqual([
             expect.objectContaining({ ruleId: 'lang-typescript#INST0005', line: 1 }),
         ]);
+    });
+
+    it('parses .tsx with JSX', async () => {
+        const task = new AnalyzeTypeScriptCodingStyleTask();
+        const output = await task.execute(
+            { content: 'export function Hello(): JSX.Element { return <div>hi</div>; }\n', filePath: '/app/Hello.tsx' },
+            new AbortController().signal,
+        ) as TaskResult;
+
+        expect(output.passed).toBe(true);
+    });
+
+    it('does not ask JavaScript for return-type annotations it cannot have', async () => {
+        const task = new AnalyzeTypeScriptCodingStyleTask();
+        const output = await task.execute(
+            { content: 'export function add(a, b) { return a + b; }\n', filePath: '/app/math.js' },
+            new AbortController().signal,
+        ) as TaskResult;
+
+        expect.soft(output.passed).toBe(true);
+        expect.soft(output.report).not.toContain('return type');
+    });
+
+    it('still asks TypeScript for return-type annotations', async () => {
+        const task = new AnalyzeTypeScriptCodingStyleTask();
+        const output = await task.execute(
+            { content: 'export function add(a: number, b: number) { return a + b; }\n', filePath: '/app/math.ts' },
+            new AbortController().signal,
+        ) as TaskResult;
+
+        expect.soft(output.passed).toBe(false);
+        expect.soft(output.report).toContain('return type');
+    });
+
+    it('does not analyse files that are not TypeScript or JavaScript source', async () => {
+        const task = new AnalyzeTypeScriptCodingStyleTask();
+        const output = await task.execute(
+            { content: '<template><div /></template>\n<script setup lang="ts">const x: any = 1;</script>\n', filePath: 'C:\\app\\Widget.vue' },
+            new AbortController().signal,
+        ) as TaskResult;
+
+        expect.soft(output.passed).toBe(true);
+        expect.soft(output.report).toContain('.vue');
     });
 
     it('throws when data.content is missing', async () => {

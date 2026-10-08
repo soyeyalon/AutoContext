@@ -129,12 +129,16 @@
             "tasks": [
                 "analyze_typescript_coding_style"
             ],
-            "description": "Runs every enabled TypeScript code-quality check on a single source file and returns one combined report. Flags anti-patterns including any, enums, @ts-ignore, type assertions, non-null assertions, unconstrained generics, and the Function/Object/{} types. Use this whenever generating, editing, or reviewing TypeScript code. Pass the source as content.",
+            "description": "Runs every enabled TypeScript code-quality check on a single source file and returns one combined report. Flags anti-patterns including any, enums, @ts-ignore, type assertions, non-null assertions, unconstrained generics, and the Function/Object/{} types. Use this whenever generating, editing, or reviewing TypeScript code. Pass the source as content and, when available, the file's absolute path as filePath so the source is parsed as what it is: .tsx and .jsx with JSX, and JavaScript without the rules that need type annotations. Taste rules (type assertions, non-null assertions, unconstrained generics, enum, object type aliases) are reported as suggestions and do not fail the check.",
             "parameters": {
                 "content": {
                     "type": "string",
                     "description": "The TypeScript source code to check.",
                     "required": true
+                },
+                "filePath": {
+                    "type": "string",
+                    "description": "Absolute path of the file whose source is in content. Its extension decides how the source is parsed; files that are not TypeScript or JavaScript source (e.g. .vue) are not analysed."
                 }
             }
         }
