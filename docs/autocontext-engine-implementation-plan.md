@@ -3160,8 +3160,8 @@ produced by this repository yet, so neither can be verified here.
 
 ## Phase 14 — Extension and hook migration
 
-**Status**: Not started. Gated on Phase 17: six of the engine's seven
-analyzer tools fail until it lands (see *Post-migration review*).
+**Status**: Not started. Its gate, Phase 17, is complete: every engine
+analyzer tool now answers (see *Post-migration review*).
 
 | # | Commit subject | State |
 |---|---|---|
@@ -3476,6 +3476,11 @@ artefact carries. Tests fold into `AutoContext.Engine.Core.Tests`.
   the project.
 - Solution file (`AutoContext.slnx`) cleaned of the retired project.
 - `build.ps1` no longer references `AutoContext.Mcp.Server`.
+- The legacy argument names the workers still accept for this server
+  (Phase 17) retire with it: `originalPath` in
+  `AnalyzeCSharpProjectStructureTask` and `comparedPath` in
+  `AnalyzeCSharpTestStyleTask`. `get_editorconfig_rules` keeps `path`,
+  which the engine's own `WorkerEditorConfigResolver` sends.
 
 **Tests**:
 - Full solution build + test + smoke green.
@@ -3490,13 +3495,15 @@ artefact carries. Tests fold into `AutoContext.Engine.Core.Tests`.
 
 ## Phase 16 — Corpus-to-registry tool contract
 
-**Status**: In progress on branch `features/corpus-tool-contract`.
+**Status**: Completed on branch `features/extension-migration`. The
+shipped subjects are shorter than the planned ones, to meet the
+repository's 50-character subject limit.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `fix(instructions): name the registered tools and their parameters` | TODO |
-| 2 | `feat(instructions-manifest-gen): validate tool obligations against the registry` | TODO |
-| 3 | `docs(plan): mark Phase 16 complete` | TODO |
+| 1 | `fix(instructions): cite registered engine tools` | DONE |
+| 2 | `feat(manifest-gen): validate cited MCP tools` | DONE |
+| 3 | `docs(plan): mark Phases 16 and 17 complete` | DONE |
 
 **Commit grouping.** Row 1 corrects the corpus before row 2 makes the
 corpus's claims machine-checked, because the validator would fail the
@@ -3641,8 +3648,9 @@ draft rested on. Three findings reorder everything after Phase 16:
    `analyze_git_commit_format` + `_content`, `get_editorconfig_rules`,
    `analyze_typescript_coding_style`), and the worker dispatcher answers
    `Unknown task` for anything else. Only
-   `analyze_csharp_project_structure` works, because its two names
-   happen to match. The legacy server fanned each tool out to its tasks;
+   `analyze_csharp_project_structure` answers, because its two names
+   happen to match — and even it ignored the path it was given (see
+   Phase 17, *Argument names*). The legacy server fanned each tool out to its tasks;
    the engine registry dropped that mapping in Phase 7. Verified by
    driving a staged engine over MCP stdio and calling every tool. No
    test caught it: the end-to-end suites call a test-driver echo tool,
@@ -3683,46 +3691,77 @@ and *session usage report* are deferred at the end with the reasons.
 
 ## Phase 17 — Make the checks callable and the guidance true
 
-**Status**: Not started. Gates Phase 14: the extension must not move
-onto an engine whose tools fail.
+**Status**: Completed on branch `features/extension-migration`.
+Phase 14 is no longer blocked by it.
 
 | # | Commit subject | State |
 |---|---|---|
-| 1 | `test(engine): call every registered tool through the bundle` | TODO |
-| 2 | `fix(engine): fan each tool out to its worker tasks` | TODO |
-| 3 | `fix(hooks): stop promising a post-write hook` | TODO |
-| 4 | `docs(plan): mark Phase 17 complete` | TODO |
+| 1 | `fix(hooks): stop promising a post-write hook` | DONE |
+| 2 | `test(engine): call every registered tool` | DONE |
+| 3 | `fix(engine): run each tool's worker tasks` | DONE |
+| 4 | `docs(plan): mark Phases 16 and 17 complete` | DONE |
 
-**Commit grouping.** Row 1 lands first. Because no commit may be red,
-it asserts on the one shipped tool that already works
-(`analyze_csharp_project_structure`) and carries a skip list naming the
-six that fail, each with the reason; row 2 empties the skip list. Row 3 is
-independent and fixes text the shipping extension shows today.
+**Commit grouping.** The independent hook fix landed first. The bundle
+test landed next with a list of the six undispatchable tools, each with
+the reason, so it passed while asserting only the tool that already
+answered; emptying that list temporarily against the then-current
+bundle failed it on all six, with the worker's `Unknown task` reply in
+each message, which is what proved the test catches the defect. Row 3
+removed the list together with the fix.
 
 **Goal**: every tool the engine lists over MCP and `McpTools.List`
 returns a real report when called with valid arguments, and a test
 proves it for every registry entry, so a future rename on either side
 fails CI instead of the agent.
 
-**Code touch**:
-- `mcp-tools-registry.json` (+ schema): each tool declares the worker
-  task names it runs (`tasks: [...]`), mirroring what the legacy
-  `mcp-workers-registry.json` nested. A tool whose name is its single
-  task may omit the list.
-- `McpToolsInvoker`: invokes each task in order on the same worker,
-  merges the `{ passed, report }` outputs into one result (passed only
-  if all passed; reports concatenated under the task's heading), and
-  returns the first task error as the tool error.
-- Engine bundle smoke (`AutoContext.Engine.Tests`): for every registry
-  tool, a fixture argument set and an assertion that the result is the
-  `ok` arm. Fixtures live beside the test, one per tool.
-- `autocontext-user-prompt-submit.cts`: delete the post-write promise.
-  Phase 19 adds the hook and may restore a truthful sentence then.
+**As built**:
+- **Tool → tasks.** `mcp-tools-registry.json` (+ schema) gives each
+  tool an optional `tasks` list, mirroring what the legacy
+  `mcp-workers-registry.json` nested; a tool whose name is its single
+  task omits it (`analyze_csharp_project_structure`).
+  `McpToolsRegistryEntry.ResolvedTasks` is the one place that default
+  is applied.
+- **Dispatch and merge.** `McpToolsInvoker` runs the tasks in order, one
+  pipe exchange each, with the same arguments and EditorConfig values,
+  logging each task's status. `McpToolsInvoker.ComposeResult` is the
+  pure merge: one reply passes through unchanged; for several, any
+  failed task fails the whole tool and the error names *every* failed
+  task (not just the first — a report missing one of its checks must
+  not read as clean); otherwise `{ passed, report }` outputs merge into
+  one report that passes only if all passed, task reports joined in
+  task order (each already opens with its own ✅/❌ summary line, so no
+  extra headings), and any other output shape is kept as one content
+  block per task.
+- **Argument names — a second drift the plan had not found.** Three
+  tasks read a different name than the engine passes:
+  `analyze_csharp_project_structure` read `originalPath`,
+  `analyze_csharp_test_style` read `comparedPath`, and
+  `get_editorconfig_rules` read `path`, while the engine registry
+  passes `filePath`. They did not fail; they silently skipped what the
+  path is for (the file-name rules; the file lookup). Each now reads
+  `filePath` first and keeps its legacy name as a fallback, because the
+  legacy server still drives the same workers. Retiring
+  `originalPath` / `comparedPath` is Phase 15 work; `path` stays,
+  because the engine's own `WorkerEditorConfigResolver` sends it.
+- **Bundle smoke** (`BundledToolsTests`): starts the staged bundle's
+  engine over stdio with its real workers, requires a fixture for every
+  registered tool, asserts each returns the `ok` arm, and separately
+  asserts that `filePath` reaches the worker (a mismatched file name is
+  reported; an `.editorconfig` value is resolved) — a report alone does
+  not prove an argument arrived.
+- **Hook text.** The prompt hook no longer promises a post-write hook;
+  it tells the agent to run the tools the matched files' validation
+  sections name. Phase 19 adds the hook.
 
-**Tests**: the bundle smoke above; invoker unit tests for fan-out,
-merge, first-error, and the single-task default.
+**Tests**: invoker unit tests for pass-through, merge, all-passed,
+failure naming, non-report outputs, and the empty-list guard; loader
+tests for declared tasks and the own-name default; a schema test that
+rejects an empty task list; worker tests for each task's `filePath`;
+the two bundle smoke tests.
 
-**Out of scope**: changing any check's rules (Phase 18).
+**Out of scope**: changing any check's rules (Phase 18). The merged C#
+report already shows why that phase matters: on this repository's own
+code it reports a missing blank line and alphabetical member order.
 
 ## Phase 18 — Check accuracy and structured findings
 
@@ -4063,11 +4102,10 @@ copy of each always-attached file.
   flipped. Phases 16–21 are post-migration surface work: they change
   what AutoContext does for a user, not how the engine is built, and
   they are ordered by what they depend on rather than by number.
-- **Phase 17 (callable checks) gates Phase 14.** Six of the engine's
-  seven analyzer tools fail with `Unknown task` today; migrating the
-  extension onto the engine before they are fixed would ship an
-  extension whose checks do not run. Row 3 of Phase 17 (the false
-  post-write promise) is independent and can land immediately.
+- **Phase 17 (callable checks) gated Phase 14**, and is complete. Six of
+  the engine's seven analyzer tools answered `Unknown task` before it;
+  migrating the extension onto the engine then would have shipped an
+  extension whose checks did not run.
 - **Phase 18 (check accuracy) depends on nothing above** and can land
   before Phase 14. It gates Phase 19: automating checks that flag
   correct code makes the agent worse.
