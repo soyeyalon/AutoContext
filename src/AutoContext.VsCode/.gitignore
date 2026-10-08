@@ -13,5 +13,4 @@ resources/instructions-files.metadata.json
 plugin/scripts/*.cjs
 .vscode-test/
 LICENSE
-COMMERCIAL.md
 TRADEMARKS.md

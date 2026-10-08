@@ -158,14 +158,13 @@ workers on demand — no separate setup.
 
 ## License
 
-AutoContext is licensed under the [AGPL-3.0](LICENSE). A separate
-[commercial license](COMMERCIAL.md) is available for organizations that want
-to use AutoContext under terms different from the AGPL-3.0.
+Copyright 2026 Eyal Alon. AutoContext is licensed under the
+[Apache License 2.0](LICENSE). You can use, modify, and distribute it,
+including commercially, at no cost.
 
 Use of the AutoContext name and logo is subject to [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Contributing
 
-Contributions require acceptance of the
-[Contributor License Agreement](CLA.md). See [CONTRIBUTING.md](CONTRIBUTING.md)
-for how to get started.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to
+get started.

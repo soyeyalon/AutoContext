@@ -2,9 +2,9 @@
 
 Contributions are welcome. Before submitting, please review the following.
 
-## Contributor License Agreement
+## License
 
-Contributions require acceptance of the [Contributor License Agreement](CLA.md) through the signing process described there.
+AutoContext is licensed under the [Apache License 2.0](LICENSE). By submitting a contribution, you agree that it is licensed under the same terms, as described in section 5 of the license. There is no separate agreement to sign.
 
 ## Getting Started
 

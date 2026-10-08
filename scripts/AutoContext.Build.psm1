@@ -837,7 +837,6 @@ function Copy-AssetsToExtensionFolder {
 
     $assets = @(
         @{ Source = 'LICENSE';        Destination = 'LICENSE';                 Label = 'LICENSE' }
-        @{ Source = 'COMMERCIAL.md';  Destination = 'COMMERCIAL.md';           Label = 'COMMERCIAL.md' }
         @{ Source = 'TRADEMARKS.md';  Destination = 'TRADEMARKS.md';           Label = 'TRADEMARKS.md' }
         @{ Source = 'servers.json';   Destination = 'resources/servers.json';  Label = 'servers.json' }
     )

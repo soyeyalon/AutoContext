@@ -5,7 +5,7 @@
   "version": "0.9.5",
   "publisher": "alonsoft",
   "preview": true,
-  "license": "AGPL-3.0-only",
+  "license": "Apache-2.0",
   "author": {
     "name": "Eyal Alon",
     "email": "autocontext@alonsoft.net",

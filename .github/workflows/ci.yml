@@ -46,7 +46,6 @@ jobs:
               - '!**/*.svg'
               - '!**/*.ico'
               - '!**/*.webp'
-              - '!.github/workflows/cla.yml'
               - '!.github/workflows/release.yml'
 
       - name: Setup .NET
