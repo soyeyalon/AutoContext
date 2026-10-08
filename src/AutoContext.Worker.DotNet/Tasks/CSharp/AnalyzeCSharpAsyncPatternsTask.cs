@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -22,6 +23,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
 {
+    private const string PassText = "Async patterns are correct.";
+    private const string ViolationNoun = "async pattern";
+
     public string TaskName => "analyze_csharp_async_patterns";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -40,40 +44,26 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var (passed, report) = await BuildReportAsync(content, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
-        AnalyzeAsyncVoid(root, tree, violations);
-        AnalyzeCancellationToken(root, tree, violations);
-        AnalyzeConfigureAwait(root, tree, violations);
+        AnalyzeAsyncVoid(root, tree, findings);
+        AnalyzeCancellationToken(root, tree, findings);
+        AnalyzeConfigureAwait(root, tree, findings);
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Async patterns are correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} async pattern violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [async-await INST0007]: no async void except event handlers
-    private static void AnalyzeAsyncVoid(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // no async void except event handlers
+    private static void AnalyzeAsyncVoid(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
@@ -94,14 +84,14 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Method '{method.Identifier.Text}' uses 'async void', which is not allowed. " +
+            findings.Add("dotnet-async-await#INST0007", line,
+                $"Method '{method.Identifier.Text}' uses 'async void', which is not allowed. " +
                 "Use 'async Task' instead — 'async void' swallows unhandled exceptions.");
         }
     }
 
-    // [async-await INST0002]: public async APIs must have CancellationToken
-    private static void AnalyzeCancellationToken(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // public async APIs must have CancellationToken
+    private static void AnalyzeCancellationToken(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
@@ -135,8 +125,8 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Public async method '{method.Identifier.Text}' is missing a CancellationToken parameter. " +
+            findings.Add("dotnet-async-await#INST0002", line,
+                $"Public async method '{method.Identifier.Text}' is missing a CancellationToken parameter. " +
                 "Add 'CancellationToken cancellationToken = default' as the last parameter.");
         }
     }
@@ -154,8 +144,8 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             _ => type.ToString(),
         };
 
-    // [async-await INST0006]: .ConfigureAwait(false) in non-test code
-    private static void AnalyzeConfigureAwait(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .ConfigureAwait(false) in non-test code
+    private static void AnalyzeConfigureAwait(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var awaitExpr in root.DescendantNodes().OfType<AwaitExpressionSyntax>())
         {
@@ -172,8 +162,8 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(awaitExpr.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Awaited expression is missing '.ConfigureAwait(false)'. " +
+            findings.Add("dotnet-async-await#INST0006", line,
+                $"Awaited expression is missing '.ConfigureAwait(false)'. " +
                 "Use 'await someTask.ConfigureAwait(false)' in non-test code.");
         }
     }

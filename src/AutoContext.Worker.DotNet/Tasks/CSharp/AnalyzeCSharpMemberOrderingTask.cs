@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -20,6 +21,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpMemberOrderingTask : IMcpTask
 {
+    private const string PassText = "Member ordering is correct.";
+    private const string ViolationNoun = "ordering";
+
     public string TaskName => "analyze_csharp_member_ordering";
 
     private enum MemberKind
@@ -64,41 +68,27 @@ internal sealed class AnalyzeCSharpMemberOrderingTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var (passed, report) = await BuildReportAsync(content, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
         foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
-            AnalyzeType(typeDecl, tree, violations);
+            AnalyzeType(typeDecl, tree, findings);
         }
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Member ordering is correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} ordering violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [csharp INST0004]: member ordering by kind, access level, static, alphabetical
-    private static void AnalyzeType(TypeDeclarationSyntax typeDecl, SyntaxTree tree, List<string> violations)
+    // member ordering by kind, access level, static, alphabetical
+    private static void AnalyzeType(TypeDeclarationSyntax typeDecl, SyntaxTree tree, AnalyzerFindings findings)
     {
         if (TestDetection.IsTestClass(typeDecl))
         {
@@ -130,31 +120,31 @@ internal sealed class AnalyzeCSharpMemberOrderingTask : IMcpTask
             {
                 if (kind < previousKind)
                 {
-                    violations.Add(
-                        $"{typeName}: {KindLabel(kind.Value)} '{name}' (line {line}) " +
+                    findings.Add("lang-csharp#INST0004", line,
+                        $"{typeName}: {KindLabel(kind.Value)} '{name}' " +
                         $"should appear before {KindLabel(previousKind.Value)} '{previousName}'.");
                 }
                 else if (kind == previousKind)
                 {
                     if (access < previousAccess)
                     {
-                        violations.Add(
-                            $"{typeName}: {AccessLabel(access)} member '{name}' (line {line}) " +
+                        findings.Add("lang-csharp#INST0004", line,
+                            $"{typeName}: {AccessLabel(access)} member '{name}' " +
                             $"should appear before {AccessLabel(previousAccess!.Value)} member '{previousName}'.");
                     }
                     else if (access == previousAccess)
                     {
                         if (isStatic && previousIsStatic == false)
                         {
-                            violations.Add(
-                                $"{typeName}: static member '{name}' (line {line}) " +
+                            findings.Add("lang-csharp#INST0004", line,
+                                $"{typeName}: static member '{name}' " +
                                 $"should appear before instance member '{previousName}'.");
                         }
                         else if (isStatic == previousIsStatic
                                  && string.Compare(name, previousName, StringComparison.Ordinal) < 0)
                         {
-                            violations.Add(
-                                $"{typeName}: member '{name}' (line {line}) " +
+                            findings.Add("lang-csharp#INST0004", line,
+                                $"{typeName}: member '{name}' " +
                                 $"should appear before '{previousName}' (alphabetical order).");
                         }
                     }

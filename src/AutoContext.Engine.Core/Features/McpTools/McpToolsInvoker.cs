@@ -32,6 +32,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
     private const string EditorconfigPropertyName = "editorconfig";
     private const string ErrorPropertyName = "error";
     private const string FilePathPropertyName = "filePath";
+    private const string FindingsPropertyName = "findings";
     private const string OutputPropertyName = "output";
     private const string PassedPropertyName = "passed";
     private const string ReportPropertyName = "report";
@@ -401,9 +402,11 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
     }
 
     /// <summary>
-    /// Merges analyzer reports — outputs shaped <c>{ passed, report }</c> —
-    /// into one report of the same shape. Returns <see langword="false"/>
-    /// when any output has another shape, so the caller keeps them apart.
+    /// Merges analyzer reports — outputs shaped <c>{ passed, report }</c>,
+    /// optionally with a structured <c>findings</c> array — into one report
+    /// of the same shape, findings concatenated in task order. Returns
+    /// <see langword="false"/> when any output has another shape, so the
+    /// caller keeps them apart.
     /// </summary>
     private static bool TryMergeReports(
         IReadOnlyList<McpToolsWorkerTaskResponse> responses,
@@ -411,6 +414,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
     {
         var passed = true;
         var reports = new List<string>(responses.Count);
+        var findings = new JsonArray();
 
         foreach (var response in responses)
         {
@@ -426,6 +430,15 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
 
             passed &= passedElement.GetBoolean();
             reports.Add(reportElement.GetString()!);
+
+            if (output.TryGetProperty(FindingsPropertyName, out var findingsElement)
+                && findingsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var finding in findingsElement.EnumerateArray())
+                {
+                    findings.Add(JsonNode.Parse(finding.GetRawText()));
+                }
+            }
         }
 
         merged = JsonSerializer.SerializeToElement(
@@ -433,6 +446,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
             {
                 [PassedPropertyName] = passed,
                 [ReportPropertyName] = string.Join("\n\n", reports),
+                [FindingsPropertyName] = findings,
             },
             WorkerJsonOptions);
 

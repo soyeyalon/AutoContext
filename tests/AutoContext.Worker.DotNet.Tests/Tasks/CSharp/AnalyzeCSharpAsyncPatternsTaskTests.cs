@@ -31,6 +31,29 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
     }
 
     [Fact]
+    public async Task Should_report_a_structured_finding_with_its_rule_and_line()
+    {
+        // Arrange
+        var source = """
+            public class MyService
+            {
+                public async void LoadData() { }
+            }
+            """;
+
+        // Act
+        var output = await new AnalyzeCSharpAsyncPatternsTask().ExecuteAsync(new { content = source });
+
+        // Assert
+        var finding = Assert.Single(output.GetProperty("findings").EnumerateArray());
+        Assert.Multiple(
+            () => Assert.Equal("dotnet-async-await#INST0007", finding.GetProperty("ruleId").GetString()),
+            () => Assert.Equal("violation", finding.GetProperty("severity").GetString()),
+            () => Assert.Equal(3, finding.GetProperty("line").GetInt32()),
+            () => Assert.DoesNotContain("Line ", finding.GetProperty("message").GetString(), StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Should_reject_async_void()
     {
         // Arrange

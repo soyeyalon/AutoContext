@@ -159,6 +159,29 @@ public sealed class McpToolsInvokerTests
         }
 
         [Fact]
+        public void Should_concatenate_structured_findings_in_task_order()
+        {
+            // Arrange
+            var responses = new[]
+            {
+                Ok("task_a", """{"passed":false,"report":"❌ a","findings":[{"ruleId":"lang-csharp#INST0005","severity":"violation","line":3,"message":"a"}]}"""),
+                Ok("task_b", """{"passed":true,"report":"✅ b","findings":[]}"""),
+                Ok("task_c", """{"passed":true,"report":"✅ c","findings":[{"ruleId":"lang-csharp#INST0015","severity":"suggestion","message":"c"}]}"""),
+            };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var findings = ReadSingleTextAsJson(Assert.IsType<JsonMcpToolsInvokeOkResult>(result).Content)
+                .GetProperty("findings")
+                .EnumerateArray()
+                .Select(static finding => finding.GetProperty("ruleId").GetString())
+                .ToList();
+            Assert.Equal(["lang-csharp#INST0005", "lang-csharp#INST0015"], findings);
+        }
+
+        [Fact]
         public void Should_pass_a_merged_report_when_every_task_passed()
         {
             // Arrange

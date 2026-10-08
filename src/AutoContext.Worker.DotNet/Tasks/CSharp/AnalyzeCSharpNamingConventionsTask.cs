@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -22,6 +23,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
 {
+    private const string PassText = "Naming conventions are correct.";
+    private const string ViolationNoun = "naming";
+
     public string TaskName => "analyze_csharp_naming_conventions";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -40,46 +44,32 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var (passed, report) = await BuildReportAsync(content, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
-        AnalyzeInterfaceNames(root, tree, violations);
-        AnalyzeExtensionClassNames(root, tree, violations);
-        AnalyzeAsyncMethodNames(root, tree, violations);
-        AnalyzePrivateFieldNames(root, tree, violations);
-        AnalyzePascalCaseTypes(root, tree, violations);
-        AnalyzePascalCaseMethods(root, tree, violations);
-        AnalyzePascalCaseProperties(root, tree, violations);
-        AnalyzePascalCaseEvents(root, tree, violations);
-        AnalyzeCamelCaseParameters(root, tree, violations);
+        AnalyzeInterfaceNames(root, tree, findings);
+        AnalyzeExtensionClassNames(root, tree, findings);
+        AnalyzeAsyncMethodNames(root, tree, findings);
+        AnalyzePrivateFieldNames(root, tree, findings);
+        AnalyzePascalCaseTypes(root, tree, findings);
+        AnalyzePascalCaseMethods(root, tree, findings);
+        AnalyzePascalCaseProperties(root, tree, findings);
+        AnalyzePascalCaseEvents(root, tree, findings);
+        AnalyzeCamelCaseParameters(root, tree, findings);
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Naming conventions are correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} naming violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [coding-standards INST0010]: interface I prefix
-    private static void AnalyzeInterfaceNames(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // interface I prefix
+    private static void AnalyzeInterfaceNames(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var iface in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>())
         {
@@ -88,8 +78,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsValidInterfaceName(name))
             {
                 var line = tree.GetLineSpan(iface.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Interface '{name}' must be prefixed with 'I' followed by an uppercase letter " +
+                findings.Add("dotnet-coding-standards#INST0011", line,
+                    $"Interface '{name}' must be prefixed with 'I' followed by an uppercase letter " +
                     $"(e.g., 'I{name}').");
             }
         }
@@ -98,8 +88,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
     private static bool IsValidInterfaceName(string name)
         => name.Length >= 2 && name[0] == 'I' && char.IsUpper(name[1]);
 
-    // [coding-standards INST0012]: extension class Extensions suffix
-    private static void AnalyzeExtensionClassNames(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // extension class Extensions suffix
+    private static void AnalyzeExtensionClassNames(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var classDecl in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
         {
@@ -122,8 +112,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!name.EndsWith("Extensions", StringComparison.Ordinal))
             {
                 var line = tree.GetLineSpan(classDecl.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Extension class '{name}' must be suffixed with 'Extensions' " +
+                findings.Add("dotnet-coding-standards#INST0013", line,
+                    $"Extension class '{name}' must be suffixed with 'Extensions' " +
                     $"(e.g., '{name}Extensions').");
             }
         }
@@ -134,8 +124,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
            && method.ParameterList.Parameters.Count > 0
            && method.ParameterList.Parameters[0].Modifiers.Any(SyntaxKind.ThisKeyword);
 
-    // [coding-standards INST0013]: async method Async suffix
-    private static void AnalyzeAsyncMethodNames(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // async method Async suffix
+    private static void AnalyzeAsyncMethodNames(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
@@ -164,15 +154,15 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!name.EndsWith("Async", StringComparison.Ordinal))
             {
                 var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Async method '{name}' must be suffixed with 'Async' " +
+                findings.Add("dotnet-coding-standards#INST0014", line,
+                    $"Async method '{name}' must be suffixed with 'Async' " +
                     $"(e.g., '{name}Async').");
             }
         }
     }
 
-    // [csharp INST0001]: private instance fields _camelCase
-    private static void AnalyzePrivateFieldNames(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // private instance fields _camelCase
+    private static void AnalyzePrivateFieldNames(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var field in root.DescendantNodes().OfType<FieldDeclarationSyntax>())
         {
@@ -195,8 +185,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
                 if (!IsValidPrivateFieldName(name))
                 {
                     var line = tree.GetLineSpan(variable.Span).StartLinePosition.Line + 1;
-                    violations.Add(
-                        $"Line {line}: Private field '{name}' must use _camelCase naming " +
+                    findings.Add("lang-csharp#INST0001", line,
+                        $"Private field '{name}' must use _camelCase naming " +
                         "(start with an underscore followed by a lowercase letter, e.g., '_myField').");
                 }
             }
@@ -215,8 +205,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
         return !hasPublic && !hasInternal && !hasProtected;
     }
 
-    // [coding-standards INST0001]: .NET naming conventions (PascalCase types)
-    private static void AnalyzePascalCaseTypes(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .NET naming conventions (PascalCase types)
+    private static void AnalyzePascalCaseTypes(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var typeDecl in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
         {
@@ -225,8 +215,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsPascalCase(name))
             {
                 var line = tree.GetLineSpan(typeDecl.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Type '{name}' must use PascalCase naming (start with an uppercase letter).");
+                findings.Add("dotnet-coding-standards#INST0001", line,
+                    $"Type '{name}' must use PascalCase naming (start with an uppercase letter).");
             }
         }
 
@@ -237,14 +227,14 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsPascalCase(name))
             {
                 var line = tree.GetLineSpan(delegateDecl.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Delegate '{name}' must use PascalCase naming (start with an uppercase letter).");
+                findings.Add("dotnet-coding-standards#INST0001", line,
+                    $"Delegate '{name}' must use PascalCase naming (start with an uppercase letter).");
             }
         }
     }
 
-    // [coding-standards INST0001]: .NET naming conventions (PascalCase methods)
-    private static void AnalyzePascalCaseMethods(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .NET naming conventions (PascalCase methods)
+    private static void AnalyzePascalCaseMethods(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
@@ -263,15 +253,15 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
                 if (!IsPascalCase(name))
                 {
                     var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-                    violations.Add(
-                        $"Line {line}: Method '{name}' must use PascalCase naming (start with an uppercase letter).");
+                    findings.Add("dotnet-coding-standards#INST0001", line,
+                        $"Method '{name}' must use PascalCase naming (start with an uppercase letter).");
                 }
             }
         }
     }
 
-    // [coding-standards INST0001]: .NET naming conventions (PascalCase properties)
-    private static void AnalyzePascalCaseProperties(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .NET naming conventions (PascalCase properties)
+    private static void AnalyzePascalCaseProperties(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var property in root.DescendantNodes().OfType<PropertyDeclarationSyntax>())
         {
@@ -280,14 +270,14 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsPascalCase(name))
             {
                 var line = tree.GetLineSpan(property.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Property '{name}' must use PascalCase naming (start with an uppercase letter).");
+                findings.Add("dotnet-coding-standards#INST0001", line,
+                    $"Property '{name}' must use PascalCase naming (start with an uppercase letter).");
             }
         }
     }
 
-    // [coding-standards INST0001]: .NET naming conventions (PascalCase events)
-    private static void AnalyzePascalCaseEvents(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .NET naming conventions (PascalCase events)
+    private static void AnalyzePascalCaseEvents(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var eventDecl in root.DescendantNodes().OfType<EventDeclarationSyntax>())
         {
@@ -296,8 +286,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsPascalCase(name))
             {
                 var line = tree.GetLineSpan(eventDecl.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Event '{name}' must use PascalCase naming (start with an uppercase letter).");
+                findings.Add("dotnet-coding-standards#INST0001", line,
+                    $"Event '{name}' must use PascalCase naming (start with an uppercase letter).");
             }
         }
 
@@ -310,15 +300,15 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
                 if (!IsPascalCase(name))
                 {
                     var line = tree.GetLineSpan(variable.Span).StartLinePosition.Line + 1;
-                    violations.Add(
-                        $"Line {line}: Event '{name}' must use PascalCase naming (start with an uppercase letter).");
+                    findings.Add("dotnet-coding-standards#INST0001", line,
+                        $"Event '{name}' must use PascalCase naming (start with an uppercase letter).");
                 }
             }
         }
     }
 
-    // [coding-standards INST0001]: .NET naming conventions (camelCase parameters)
-    private static void AnalyzeCamelCaseParameters(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // .NET naming conventions (camelCase parameters)
+    private static void AnalyzeCamelCaseParameters(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var parameter in root.DescendantNodes().OfType<ParameterSyntax>())
         {
@@ -349,8 +339,8 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
             if (!IsCamelCase(name))
             {
                 var line = tree.GetLineSpan(parameter.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: Parameter '{name}' must use camelCase naming " +
+                findings.Add("dotnet-coding-standards#INST0001", line,
+                    $"Parameter '{name}' must use camelCase naming " +
                     "(start with a lowercase letter, no leading underscore).");
             }
         }

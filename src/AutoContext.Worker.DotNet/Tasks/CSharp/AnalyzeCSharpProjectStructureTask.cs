@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -26,6 +27,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
 {
+    private const string PassText = "Project structure is correct.";
+    private const string ViolationNoun = "project structure";
+
     public string TaskName => "analyze_csharp_project_structure";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -48,18 +52,12 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
         var fileName = string.IsNullOrEmpty(filePath) ? string.Empty : Path.GetFileName(filePath);
         var namespacePreference = data.TryGetString("editorconfig.csharp_style_namespace_declarations");
 
-        var (passed, report) = await BuildReportAsync(content, fileName, namespacePreference, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, fileName, namespacePreference, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(
+    private static async Task<AnalyzerFindings> AnalyzeAsync(
         string content,
         string fileName,
         string? namespacePreference,
@@ -67,64 +65,56 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
         var effectiveNamespace = namespacePreference ?? "file_scoped";
 
         if (effectiveNamespace == "block_scoped")
         {
-            AnalyzeBlockScopedNamespace(root, tree, violations);
+            AnalyzeBlockScopedNamespace(root, tree, findings);
         }
         else
         {
-            AnalyzeFileScopedNamespace(root, tree, violations);
+            AnalyzeFileScopedNamespace(root, tree, findings);
         }
 
-        AnalyzeSingleTypePerFile(root, violations);
-        AnalyzeFileNameMatchesType(root, fileName, violations);
-        AnalyzePragmaWarningDisable(root, tree, violations);
+        AnalyzeSingleTypePerFile(root, findings);
+        AnalyzeFileNameMatchesType(root, fileName, findings);
+        AnalyzePragmaWarningDisable(root, tree, findings);
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Project structure is correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} project structure violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
     // EditorConfig: csharp_style_namespace_declarations (block-scoped)
-    private static void AnalyzeBlockScopedNamespace(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    private static void AnalyzeBlockScopedNamespace(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         var fileScopedNamespaces = root.DescendantNodes().OfType<FileScopedNamespaceDeclarationSyntax>().ToList();
 
         foreach (var ns in fileScopedNamespaces)
         {
             var line = tree.GetLineSpan(ns.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: File-scoped namespace '{ns.Name}' detected. " +
+            findings.Add("editorconfig#csharp_style_namespace_declarations", line,
+                $"File-scoped namespace '{ns.Name}' detected. " +
                 "Use a block-scoped namespace instead (csharp_style_namespace_declarations = block_scoped).");
         }
     }
 
     // EditorConfig: csharp_style_namespace_declarations (file-scoped)
-    private static void AnalyzeFileScopedNamespace(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    private static void AnalyzeFileScopedNamespace(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         var blockNamespaces = root.DescendantNodes().OfType<NamespaceDeclarationSyntax>().ToList();
 
         foreach (var ns in blockNamespaces)
         {
             var line = tree.GetLineSpan(ns.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Block-scoped namespace '{ns.Name}' detected. " +
+            findings.Add("lang-csharp#INST0006", line,
+                $"Block-scoped namespace '{ns.Name}' detected. " +
                 "Use a file-scoped namespace instead (e.g., 'namespace MyApp.Services;').");
         }
     }
 
-    // [coding-standards INST0016]: single type per file, file name matches type
-    private static void AnalyzeSingleTypePerFile(SyntaxNode root, List<string> violations)
+    // single type per file, file name matches type
+    private static void AnalyzeSingleTypePerFile(SyntaxNode root, AnalyzerFindings findings)
     {
         var topLevelTypes = CollectTopLevelTypes(root);
 
@@ -135,13 +125,13 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
 
         var names = topLevelTypes.Select(GetTypeName).ToList();
 
-        violations.Add(
+        findings.Add("dotnet-coding-standards#INST0017", null,
             $"File contains {topLevelTypes.Count} top-level type declarations ({string.Join(", ", names.Select(n => $"'{n}'"))}). " +
             "Keep a single type per file and name the file after that type.");
     }
 
-    // [coding-standards INST0016]: file name matches type name
-    private static void AnalyzeFileNameMatchesType(SyntaxNode root, ReadOnlySpan<char> fileName, List<string> violations)
+    // file name matches type name
+    private static void AnalyzeFileNameMatchesType(SyntaxNode root, ReadOnlySpan<char> fileName, AnalyzerFindings findings)
     {
         if (fileName.IsEmpty || fileName.IsWhiteSpace())
         {
@@ -162,7 +152,7 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
 
         if (!expectedName.Equals(actualName, StringComparison.Ordinal))
         {
-            violations.Add(
+            findings.Add("dotnet-coding-standards#INST0017", null,
                 $"File name '{fileName}' does not match the type name '{actualName}'. " +
                 $"Rename the file to '{actualName}.cs'.");
         }
@@ -205,8 +195,8 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
             _ => string.Empty,
         };
 
-    // [csharp INST0013]: no #pragma warning disable
-    private static void AnalyzePragmaWarningDisable(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // no #pragma warning disable
+    private static void AnalyzePragmaWarningDisable(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var trivia in root.DescendantTrivia())
         {
@@ -226,8 +216,8 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(trivia.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: '#pragma warning disable' is not preferred. " +
+            findings.Add("lang-csharp#INST0013", line,
+                $"'#pragma warning disable' is not preferred. " +
                 "Use [SuppressMessage] attribute with a justification instead.");
         }
     }

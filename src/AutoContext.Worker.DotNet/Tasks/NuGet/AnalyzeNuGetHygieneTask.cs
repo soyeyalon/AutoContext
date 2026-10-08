@@ -6,6 +6,7 @@ using System.Xml;
 using System.Xml.Linq;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 /// <summary>
 /// <c>analyze_nuget_hygiene</c> — enforces NuGet hygiene rules from
@@ -51,19 +52,6 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var report = BuildReport(content, out var passed);
-
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return Task.FromResult(JsonSerializer.SerializeToElement(output));
-    }
-
-    private static string BuildReport(string content, out bool passed)
-    {
         XDocument doc;
 
         try
@@ -72,32 +60,37 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
         }
         catch (XmlException ex)
         {
-            passed = false;
-            return $"❌ Failed to parse .csproj XML: {ex.Message}";
+            return Task.FromResult(UnparseableOutput($"❌ Failed to parse .csproj XML: {ex.Message}"));
         }
 
         if (doc.Root is null)
         {
-            passed = false;
-            return "❌ Failed to parse .csproj XML: document has no root element.";
+            return Task.FromResult(UnparseableOutput("❌ Failed to parse .csproj XML: document has no root element."));
         }
 
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
         var packages = GetPackageReferences(doc.Root);
         var usesCpm = UsesCentralPackageManagement(doc.Root);
 
-        CheckDuplicatePackages(packages, violations);
-        CheckFloatingVersions(packages, violations);
-        CheckMissingVersions(packages, usesCpm, violations);
-        CheckBuiltInAlternatives(packages, violations);
+        CheckDuplicatePackages(packages, findings);
+        CheckFloatingVersions(packages, findings);
+        CheckMissingVersions(packages, usesCpm, findings);
+        CheckBuiltInAlternatives(packages, findings);
 
-        passed = violations.Count == 0;
-
-        return passed
-            ? "✅ NuGet hygiene is correct."
-            : $"❌ Found {violations.Count} NuGet hygiene violation(s):\n" +
-              string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
+        return Task.FromResult(findings.ToOutput("NuGet hygiene is correct.", "NuGet hygiene"));
     }
+
+    /// <summary>
+    /// The output for a project file that cannot be read at all: a failed
+    /// check with no findings, because no rule was evaluated.
+    /// </summary>
+    private static JsonElement UnparseableOutput(string report)
+        => JsonSerializer.SerializeToElement(new JsonObject
+        {
+            ["passed"] = false,
+            ["report"] = report,
+            ["findings"] = new JsonArray(),
+        });
 
     private static List<(string Name, string? Version)> GetPackageReferences(XElement root)
     {
@@ -127,10 +120,10 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
             .Any(e => e.Name.LocalName == "ManagePackageVersionsCentrally"
                       && string.Equals(e.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase));
 
-    // [nuget INST0002]: review package references — no duplicates
+    // review package references — no duplicates
     private static void CheckDuplicatePackages(
         List<(string Name, string? Version)> packages,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -138,15 +131,15 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
         {
             if (!seen.Add(name))
             {
-                violations.Add($"Duplicate PackageReference '{name}'. Remove the redundant entry.");
+                findings.Add("dotnet-nuget#INST0002", null, $"Duplicate PackageReference '{name}'. Remove the redundant entry.");
             }
         }
     }
 
-    // [nuget INST0002]: review package references — no floating versions
+    // review package references — no floating versions
     private static void CheckFloatingVersions(
         List<(string Name, string? Version)> packages,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         foreach (var (name, version) in packages)
         {
@@ -159,18 +152,18 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
                 || version.Contains('[', StringComparison.Ordinal)
                 || version.Contains('(', StringComparison.Ordinal))
             {
-                violations.Add(
+                findings.Add("dotnet-nuget#INST0002", null,
                     $"Package '{name}' uses a floating or range version '{version}'. " +
                     "Pin to an exact version for reproducible builds.");
             }
         }
     }
 
-    // [nuget INST0002]: review package references — no missing versions
+    // review package references — no missing versions
     private static void CheckMissingVersions(
         List<(string Name, string? Version)> packages,
         bool usesCpm,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         if (usesCpm)
         {
@@ -181,23 +174,23 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
         {
             if (string.IsNullOrWhiteSpace(version))
             {
-                violations.Add(
+                findings.Add("dotnet-nuget#INST0002", null,
                     $"Package '{name}' has no Version specified. " +
                     "Add an explicit version or enable Central Package Management.");
             }
         }
     }
 
-    // [nuget INST0001]: prefer built-in .NET libraries
+    // prefer built-in .NET libraries
     private static void CheckBuiltInAlternatives(
         List<(string Name, string? Version)> packages,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         foreach (var (name, _) in packages)
         {
             if (BuiltInAlternatives.TryGetValue(name, out var alternative))
             {
-                violations.Add(
+                findings.Add("dotnet-nuget#INST0001", null,
                     $"Package '{name}' has a built-in .NET alternative: {alternative}. " +
                     "Consider whether the built-in option meets your needs before keeping this dependency.");
             }

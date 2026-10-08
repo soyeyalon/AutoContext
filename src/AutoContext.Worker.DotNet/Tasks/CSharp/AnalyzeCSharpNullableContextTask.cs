@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -21,6 +22,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
 {
+    private const string PassText = "Nullable context is correct.";
+    private const string ViolationNoun = "nullable context";
+
     public string TaskName => "analyze_csharp_nullable_context";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -39,39 +43,25 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var (passed, report) = await BuildReportAsync(content, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(string content, CancellationToken cancellationToken)
+    private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
-        AnalyzeNullableDisable(root, tree, violations);
-        AnalyzeNullForgivingOperator(root, tree, violations);
+        AnalyzeNullableDisable(root, tree, findings);
+        AnalyzeNullForgivingOperator(root, tree, findings);
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Nullable context is correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} nullable context violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [csharp INST0019]: keep #nullable enable
-    private static void AnalyzeNullableDisable(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // keep #nullable enable
+    private static void AnalyzeNullableDisable(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var trivia in root.DescendantTrivia())
         {
@@ -88,15 +78,15 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
             if (directive.SettingToken.IsKind(SyntaxKind.DisableKeyword))
             {
                 var line = tree.GetLineSpan(trivia.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: '#nullable disable' is not allowed. " +
+                findings.Add("lang-csharp#INST0019", line,
+                    $"'#nullable disable' is not allowed. " +
                     "Keep nullable reference types enabled globally via <Nullable>enable</Nullable> in the project file.");
             }
         }
     }
 
-    // [csharp INST0020]: no null-forgiving operator (!)
-    private static void AnalyzeNullForgivingOperator(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // no null-forgiving operator (!)
+    private static void AnalyzeNullForgivingOperator(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var expression in root.DescendantNodes().OfType<PostfixUnaryExpressionSyntax>())
         {
@@ -106,8 +96,8 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(expression.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: The null-forgiving operator '!' is not allowed. " +
+            findings.Add("lang-csharp#INST0020", line,
+                $"The null-forgiving operator '!' is not allowed. " +
                 "Fix the underlying nullability issue instead of suppressing the warning.");
         }
     }

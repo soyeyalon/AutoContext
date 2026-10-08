@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -32,6 +33,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
 {
+    private const string PassText = "Test style is correct.";
+    private const string ViolationNoun = "test style";
+
     public string TaskName => "analyze_csharp_test_style";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -54,18 +58,12 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         var projectDirectory = data.TryGetString("projectDirectory") ?? string.Empty;
         var rootNamespace = data.TryGetString("rootNamespace") ?? string.Empty;
 
-        var (passed, report) = await BuildReportAsync(content, comparedPath, projectDirectory, rootNamespace, cancellationToken).ConfigureAwait(false);
+        var findings = await AnalyzeAsync(content, comparedPath, projectDirectory, rootNamespace, cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(
+    private static async Task<AnalyzerFindings> AnalyzeAsync(
         string content,
         string comparedPath,
         string projectDirectory,
@@ -74,48 +72,40 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
     {
         var tree = CSharpSyntaxTree.ParseText(content, cancellationToken: cancellationToken);
         var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
         var testClasses = FindTestClasses(root);
 
         if (testClasses.Count == 0)
         {
-            return (true, "✅ Test style is correct.");
+            return findings;
         }
 
         var fileName = string.IsNullOrEmpty(comparedPath) ? string.Empty : Path.GetFileName(comparedPath);
-        AnalyzeFileNameConvention(fileName, violations);
-        AnalyzeNamespaceConvention(root, comparedPath, projectDirectory, rootNamespace, violations);
+        AnalyzeFileNameConvention(fileName, findings);
+        AnalyzeNamespaceConvention(root, comparedPath, projectDirectory, rootNamespace, findings);
 
         foreach (var testClass in testClasses)
         {
-            AnalyzeTestClassNaming(testClass, tree, violations);
-            AnalyzeTestClassXmlDoc(testClass, tree, violations);
+            AnalyzeTestClassNaming(testClass, tree, findings);
+            AnalyzeTestClassXmlDoc(testClass, tree, findings);
 
             var testMethods = GetTestMethods(testClass);
 
             foreach (var method in testMethods)
             {
-                AnalyzeTestMethodNaming(method, tree, violations);
-                AnalyzeTestMethodXmlDoc(method, tree, violations);
-                AnalyzeAssertMultiple(method, tree, violations);
-                AnalyzeConfigureAwait(method, tree, violations);
+                AnalyzeTestMethodNaming(method, tree, findings);
+                AnalyzeTestMethodXmlDoc(method, tree, findings);
+                AnalyzeAssertMultiple(method, tree, findings);
+                AnalyzeConfigureAwait(method, tree, findings);
             }
         }
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Test style is correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} test style violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [dotnet-testing INST0005]: file name follows class name '<UnitUnderTest>Tests'
-    private static void AnalyzeFileNameConvention(ReadOnlySpan<char> fileName, List<string> violations)
+    // file name follows class name '<UnitUnderTest>Tests'
+    private static void AnalyzeFileNameConvention(ReadOnlySpan<char> fileName, AnalyzerFindings findings)
     {
         if (fileName.IsEmpty || fileName.IsWhiteSpace())
         {
@@ -126,7 +116,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
 
         if (!nameWithoutExtension.EndsWith("Tests", StringComparison.Ordinal))
         {
-            violations.Add(
+            findings.Add("dotnet-testing#INST0007", null,
                 $"Test file '{fileName}' must end with 'Tests' before the extension " +
                 $"(e.g., '{nameWithoutExtension}Tests.cs').");
         }
@@ -143,13 +133,13 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         return dotIndex < 0 ? name : name[..dotIndex];
     }
 
-    // [dotnet-testing INST0001]: namespace follows project structure (RootNamespace + folder path)
+    // namespace follows project structure (RootNamespace + folder path)
     private static void AnalyzeNamespaceConvention(
         SyntaxNode root,
         string comparedPath,
         string projectDirectory,
         string rootNamespace,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         if (string.IsNullOrWhiteSpace(comparedPath) || string.IsNullOrWhiteSpace(projectDirectory))
         {
@@ -181,7 +171,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
 
         if (!string.Equals(declaredNamespace, expectedNamespace, StringComparison.Ordinal))
         {
-            violations.Add(
+            findings.Add("dotnet-testing#INST0004", null,
                 $"Namespace '{declaredNamespace}' does not match the project structure. " +
                 $"Expected '{expectedNamespace}' (RootNamespace + folder path).");
         }
@@ -257,22 +247,22 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
             .OfType<MethodDeclarationSyntax>()
             .Where(TestDetection.HasTestAttribute)];
 
-    // [dotnet-testing INST0002]: test class suffix Tests
-    private static void AnalyzeTestClassNaming(TypeDeclarationSyntax testClass, SyntaxTree tree, List<string> violations)
+    // test class suffix Tests
+    private static void AnalyzeTestClassNaming(TypeDeclarationSyntax testClass, SyntaxTree tree, AnalyzerFindings findings)
     {
         var name = testClass.Identifier.Text;
 
         if (!name.EndsWith("Tests", StringComparison.Ordinal))
         {
             var line = tree.GetLineSpan(testClass.Identifier.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Test class '{name}' must be suffixed with 'Tests' " +
+            findings.Add("dotnet-testing#INST0005", line,
+                $"Test class '{name}' must be suffixed with 'Tests' " +
                 $"(e.g., '{name}Tests').");
         }
     }
 
-    // [dotnet-testing INST0008]: no XML docs on test classes
-    private static void AnalyzeTestClassXmlDoc(TypeDeclarationSyntax testClass, SyntaxTree tree, List<string> violations)
+    // no XML docs on test classes
+    private static void AnalyzeTestClassXmlDoc(TypeDeclarationSyntax testClass, SyntaxTree tree, AnalyzerFindings findings)
     {
         if (!HasXmlDocComment(testClass))
         {
@@ -280,27 +270,27 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         }
 
         var line = tree.GetLineSpan(testClass.Identifier.Span).StartLinePosition.Line + 1;
-        violations.Add(
-            $"Line {line}: Test class '{testClass.Identifier.Text}' should not have XML doc comments. " +
+        findings.Add("dotnet-testing#INST0002", line,
+            $"Test class '{testClass.Identifier.Text}' should not have XML doc comments. " +
             "Rely on descriptive names to convey intent.");
     }
 
-    // [dotnet-testing INST0002]: test method prefix Should_ / Should_not_
-    private static void AnalyzeTestMethodNaming(MethodDeclarationSyntax method, SyntaxTree tree, List<string> violations)
+    // test method prefix Should_ / Should_not_
+    private static void AnalyzeTestMethodNaming(MethodDeclarationSyntax method, SyntaxTree tree, AnalyzerFindings findings)
     {
         var name = method.Identifier.Text;
 
         if (!name.StartsWith("Should_", StringComparison.Ordinal))
         {
             var line = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Test method '{name}' must start with 'Should_' or 'Should_not_' " +
+            findings.Add("dotnet-testing#INST0005", line,
+                $"Test method '{name}' must start with 'Should_' or 'Should_not_' " +
                 $"(e.g., 'Should_{ToSnakeCase(name)}').");
         }
     }
 
-    // [dotnet-testing INST0008]: no XML docs on test methods
-    private static void AnalyzeTestMethodXmlDoc(MethodDeclarationSyntax method, SyntaxTree tree, List<string> violations)
+    // no XML docs on test methods
+    private static void AnalyzeTestMethodXmlDoc(MethodDeclarationSyntax method, SyntaxTree tree, AnalyzerFindings findings)
     {
         if (!HasXmlDocComment(method))
         {
@@ -308,13 +298,13 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         }
 
         var line = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1;
-        violations.Add(
-            $"Line {line}: Test method '{method.Identifier.Text}' should not have XML doc comments. " +
+        findings.Add("dotnet-testing#INST0002", line,
+            $"Test method '{method.Identifier.Text}' should not have XML doc comments. " +
             "Rely on descriptive names to convey intent.");
     }
 
-    // [xunit INST0004]: Assert.Multiple for multiple assertions
-    private static void AnalyzeAssertMultiple(MethodDeclarationSyntax method, SyntaxTree tree, List<string> violations)
+    // Assert.Multiple for multiple assertions
+    private static void AnalyzeAssertMultiple(MethodDeclarationSyntax method, SyntaxTree tree, AnalyzerFindings findings)
     {
         if (method.Body is null && method.ExpressionBody is null)
         {
@@ -338,14 +328,14 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         }
 
         var line = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1;
-        violations.Add(
-            $"Line {line}: Test method '{method.Identifier.Text}' has {assertCalls.Count} Assert calls " +
+        findings.Add("dotnet-xunit#INST0004", line,
+            $"Test method '{method.Identifier.Text}' has {assertCalls.Count} Assert calls " +
             "but does not use Assert.Multiple(). Wrap multiple assertions in Assert.Multiple() " +
             "so all failures are reported together.");
     }
 
-    // [xunit INST0009]: no .ConfigureAwait() in test methods
-    private static void AnalyzeConfigureAwait(MethodDeclarationSyntax method, SyntaxTree tree, List<string> violations)
+    // no .ConfigureAwait() in test methods
+    private static void AnalyzeConfigureAwait(MethodDeclarationSyntax method, SyntaxTree tree, AnalyzerFindings findings)
     {
         var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>();
 
@@ -362,8 +352,8 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
             }
 
             var line = tree.GetLineSpan(invocation.Span).StartLinePosition.Line + 1;
-            violations.Add(
-                $"Line {line}: Test method '{method.Identifier.Text}' calls .ConfigureAwait(). " +
+            findings.Add("dotnet-xunit#INST0009", line,
+                $"Test method '{method.Identifier.Text}' calls .ConfigureAwait(). " +
                 "Do not call .ConfigureAwait() inside test methods (xUnit1030).");
         }
     }

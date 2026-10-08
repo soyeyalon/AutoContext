@@ -1,10 +1,12 @@
 namespace AutoContext.Instructions.Manifest.Generator.Tests;
 
+using System.Text.RegularExpressions;
+
 using AutoContext.Engine.Tests.Support.Diagnostics;
 using AutoContext.Instructions.Manifest.Generator;
 using AutoContext.Instructions.Parser;
 
-public sealed class ShippedInstructionsRoundTripTests
+public sealed partial class ShippedInstructionsRoundTripTests
 {
     public sealed class Build
     {
@@ -87,6 +89,53 @@ public sealed class ShippedInstructionsRoundTripTests
             // Assert
             Assert.Null(exception);
         }
+    }
+
+    public sealed partial class WorkerRuleIds
+    {
+        private readonly CorpusParser _corpusParser = new();
+
+        [Fact]
+        public async Task Should_resolve_every_rule_id_the_workers_report()
+        {
+            // Arrange — a finding's rule id is what a user disables and what a hook matches
+            // on, so it must name a real rule: the worker tags once drifted onto
+            // neighbouring rule numbers when the corpus was renumbered, unnoticed.
+            var corpus = await _corpusParser.ParseAsync(EngineInstructionsPath.Value, TestContext.Current.CancellationToken);
+            var ruleIds = corpus.Values
+                .SelectMany(static file => file.Content.Body.Rules
+                    .Where(static rule => rule.Id is not null)
+                    .Select(rule => file.FileName[..^".instructions.md".Length] + "#" + rule.Id))
+                .ToHashSet(StringComparer.Ordinal);
+            var cited = ReadWorkerRuleIds();
+
+            // Act
+            var unresolved = cited.Where(id => !ruleIds.Contains(id)).Order(StringComparer.Ordinal).ToList();
+
+            // Assert
+            Assert.Multiple(
+                () => Assert.NotEmpty(cited),
+                () => Assert.Empty(unresolved));
+        }
+
+        private static HashSet<string> ReadWorkerRuleIds()
+        {
+            var sourceRoots = new[]
+            {
+                Path.Combine(RepositoryRoot.Value, "src", "AutoContext.Worker.DotNet", "Tasks"),
+                Path.Combine(RepositoryRoot.Value, "src", "AutoContext.Worker.Web", "src"),
+            };
+
+            return sourceRoots
+                .Where(Directory.Exists)
+                .SelectMany(static directory => Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories))
+                .Where(static path => path.EndsWith(".cs", StringComparison.Ordinal) || path.EndsWith(".ts", StringComparison.Ordinal))
+                .SelectMany(static path => RuleIdLiteralRegex().Matches(File.ReadAllText(path)).Select(static match => match.Groups[1].Value))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        [GeneratedRegex("""["']([a-z][a-z0-9-]*#INST\d{4})["']""")]
+        private static partial Regex RuleIdLiteralRegex();
     }
 
     public sealed class ToolObligations

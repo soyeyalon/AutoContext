@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 using AutoContext.Workers.Core;
+using AutoContext.Workers.Core.Analysis;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -28,6 +29,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </remarks>
 internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 {
+    private const string PassText = "Code style is correct.";
+    private const string ViolationNoun = "style";
+
     public string TaskName => "analyze_csharp_coding_style";
 
     public async Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
@@ -53,7 +57,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         var expressionBodiedMethods = data.TryGetString("editorconfig.csharp_style_expression_bodied_methods");
         var expressionBodiedProperties = data.TryGetString("editorconfig.csharp_style_expression_bodied_properties");
 
-        var (passed, report) = await BuildReportAsync(
+        var findings = await AnalyzeAsync(
             content,
             bracePreference,
             sortSystemFirst,
@@ -61,16 +65,10 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
             expressionBodiedProperties,
             cancellationToken).ConfigureAwait(false);
 
-        var output = new JsonObject
-        {
-            ["passed"] = passed,
-            ["report"] = report,
-        };
-
-        return JsonSerializer.SerializeToElement(output);
+        return findings.ToOutput(PassText, ViolationNoun);
     }
 
-    private static async Task<(bool Passed, string Report)> BuildReportAsync(
+    private static async Task<AnalyzerFindings> AnalyzeAsync(
         string content,
         string bracePreference,
         bool sortSystemFirst,
@@ -85,77 +83,69 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         var lineCount = contentSpan.Count('\n') + 1;
         var lineRanges = new Range[lineCount];
         contentSpan.Split(lineRanges, '\n');
-        var violations = new List<string>();
+        var findings = new AnalyzerFindings();
 
-        AnalyzeRegions(root, tree, violations);
-        AnalyzeDecorativeComments(contentSpan, lineRanges, violations);
-        AnalyzeBlankLineBeforeControlFlow(root, tree, contentSpan, lineRanges, violations);
-        AnalyzeExpressionBodyArrowPlacement(root, tree, violations);
-        AnalyzeXmlDocComments(root, tree, violations);
-        AnalyzeCurlyBraces(root, tree, bracePreference, violations);
+        AnalyzeRegions(root, tree, findings);
+        AnalyzeDecorativeComments(contentSpan, lineRanges, findings);
+        AnalyzeBlankLineBeforeControlFlow(root, tree, contentSpan, lineRanges, findings);
+        AnalyzeExpressionBodyArrowPlacement(root, tree, findings);
+        AnalyzeXmlDocComments(root, tree, findings);
+        AnalyzeCurlyBraces(root, tree, bracePreference, findings);
 
         if (sortSystemFirst)
         {
-            AnalyzeSortSystemDirectivesFirst(root, tree, violations);
+            AnalyzeSortSystemDirectivesFirst(root, tree, findings);
         }
 
         if (expressionBodiedMethods is not null)
         {
-            AnalyzeExpressionBodiedMethods(root, tree, expressionBodiedMethods, violations);
+            AnalyzeExpressionBodiedMethods(root, tree, expressionBodiedMethods, findings);
         }
 
         if (expressionBodiedProperties is not null)
         {
-            AnalyzeExpressionBodiedProperties(root, tree, expressionBodiedProperties, violations);
+            AnalyzeExpressionBodiedProperties(root, tree, expressionBodiedProperties, findings);
         }
 
-        if (violations.Count == 0)
-        {
-            return (true, "✅ Code style is correct.");
-        }
-
-        var report = $"❌ Found {violations.Count} style violation(s):\n" +
-                     string.Join('\n', violations.Select((v, i) => $"  {i + 1}. {v}"));
-
-        return (false, report);
+        return findings;
     }
 
-    // [csharp INST0005]: no #region directives
-    private static void AnalyzeRegions(SyntaxNode root, SyntaxTree tree, List<string> violations)
+    // no #region directives
+    private static void AnalyzeRegions(SyntaxNode root, SyntaxTree tree, AnalyzerFindings findings)
     {
         foreach (var trivia in root.DescendantTrivia())
         {
             if (trivia.IsKind(SyntaxKind.RegionDirectiveTrivia))
             {
                 var line = tree.GetLineSpan(trivia.Span).StartLinePosition.Line + 1;
-                violations.Add($"Line {line}: #region directives are not allowed. They hide code structure.");
+                findings.Add("lang-csharp#INST0005", line, $"#region directives are not allowed. They hide code structure.");
             }
         }
     }
 
-    // [csharp INST0022]: no decorative section-header comments
+    // no decorative section-header comments
     private static void AnalyzeDecorativeComments(
         ReadOnlySpan<char> content,
         ReadOnlySpan<Range> lineRanges,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         for (var i = 0; i < lineRanges.Length; i++)
         {
             if (DecorativeCommentRegex().IsMatch(content[lineRanges[i]]))
             {
-                violations.Add(
-                    $"Line {i + 1}: Decorative section-header comment detected. " +
+                findings.Add("lang-csharp#INST0022", i + 1,
+                    $"Decorative section-header comment detected. " +
                     "Organize code through consistent member ordering instead.");
             }
         }
     }
 
-    // [csharp INST0018]: curly braces for control flow statements
+    // curly braces for control flow statements
     private static void AnalyzeCurlyBraces(
         SyntaxNode root,
         SyntaxTree tree,
         string preference,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var controlFlowStatements = root.DescendantNodes()
             .Where(n => n is IfStatementSyntax or ElseClauseSyntax
@@ -182,8 +172,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     if (embedded is BlockSyntax block && block.Statements.Count == 1
                         && !IsMultilineStatement(block.Statements[0], tree))
                     {
-                        violations.Add(
-                            $"Line {line}: '{keyword}' statement has unnecessary curly braces " +
+                        findings.Add("editorconfig#csharp_prefer_braces", line,
+                            $"'{keyword}' statement has unnecessary curly braces " +
                             "around a single-line body (csharp_prefer_braces = false).");
                     }
 
@@ -193,15 +183,15 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     if (embedded is BlockSyntax wmBlock && wmBlock.Statements.Count == 1
                         && !IsMultilineStatement(wmBlock.Statements[0], tree))
                     {
-                        violations.Add(
-                            $"Line {line}: '{keyword}' statement has unnecessary curly braces " +
+                        findings.Add("editorconfig#csharp_prefer_braces", line,
+                            $"'{keyword}' statement has unnecessary curly braces " +
                             "around a single-line body (csharp_prefer_braces = when_multiline).");
                     }
                     else if (embedded is not BlockSyntax
                              && IsMultilineStatement(embedded, tree))
                     {
-                        violations.Add(
-                            $"Line {line}: '{keyword}' statement requires curly braces " +
+                        findings.Add("editorconfig#csharp_prefer_braces", line,
+                            $"'{keyword}' statement requires curly braces " +
                             "around a multi-line body (csharp_prefer_braces = when_multiline).");
                     }
 
@@ -210,8 +200,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                 default: // "true" or unrecognized — require braces
                     if (embedded is not BlockSyntax && !IsGuardClause(node, embedded))
                     {
-                        violations.Add(
-                            $"Line {line}: '{keyword}' statement requires curly braces " +
+                        findings.Add("lang-csharp#INST0018", line,
+                            $"'{keyword}' statement requires curly braces " +
                             "(exception: single-line guard clauses).");
                     }
 
@@ -227,13 +217,13 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         return span.StartLinePosition.Line != span.EndLinePosition.Line;
     }
 
-    // [csharp INST0015]: blank line before control flow statements
+    // blank line before control flow statements
     private static void AnalyzeBlankLineBeforeControlFlow(
         SyntaxNode root,
         SyntaxTree tree,
         ReadOnlySpan<char> content,
         ReadOnlySpan<Range> lineRanges,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var controlFlowNodes = root.DescendantNodes()
             .Where(n => n is IfStatementSyntax or ForStatementSyntax
@@ -267,18 +257,18 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
             if (previousLine.Length > 0 && !(previousLine.Length == 1 && previousLine[0] == '{'))
             {
-                violations.Add(
-                    $"Line {lineIndex + 1}: Missing blank line before " +
+                findings.Add("lang-csharp#INST0015", lineIndex + 1,
+                    $"Missing blank line before " +
                     $"'{GetControlFlowKeyword(node)}' statement.");
             }
         }
     }
 
-    // [csharp INST0017]: expression-body arrow on the next line
+    // expression-body arrow on the next line
     private static void AnalyzeExpressionBodyArrowPlacement(
         SyntaxNode root,
         SyntaxTree tree,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var arrowClauses = root.DescendantNodes().OfType<ArrowExpressionClauseSyntax>();
 
@@ -302,8 +292,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
             if (arrowLine == parentStartLine)
             {
                 var line = arrowLine + 1;
-                violations.Add(
-                    $"Line {line}: Expression-body arrow (=>) must be on the next line, " +
+                findings.Add("lang-csharp#INST0017", line,
+                    $"Expression-body arrow (=>) must be on the next line, " +
                     "not at the end of the signature.");
             }
         }
@@ -370,11 +360,11 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         return block.Statements.FirstOrDefault() == node;
     }
 
-    // [csharp INST0021]: XML doc comments on public/protected members
+    // XML doc comments on public/protected members
     private static void AnalyzeXmlDocComments(
         SyntaxNode root,
         SyntaxTree tree,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
@@ -385,7 +375,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
             if (IsPublicOrProtected(typeDecl))
             {
-                AnalyzeMemberXmlDoc(typeDecl, tree, violations);
+                AnalyzeMemberXmlDoc(typeDecl, tree, findings);
             }
 
             foreach (var member in typeDecl.Members)
@@ -407,7 +397,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     continue;
                 }
 
-                AnalyzeMemberXmlDoc(member, tree, violations);
+                AnalyzeMemberXmlDoc(member, tree, findings);
             }
         }
 
@@ -416,7 +406,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         {
             if (IsPublicOrProtected(enumDecl))
             {
-                AnalyzeMemberXmlDoc(enumDecl, tree, violations);
+                AnalyzeMemberXmlDoc(enumDecl, tree, findings);
             }
         }
 
@@ -424,7 +414,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         {
             if (IsPublicOrProtected(delegateDecl))
             {
-                AnalyzeMemberXmlDoc(delegateDecl, tree, violations);
+                AnalyzeMemberXmlDoc(delegateDecl, tree, findings);
             }
         }
     }
@@ -432,7 +422,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
     private static void AnalyzeMemberXmlDoc(
         MemberDeclarationSyntax member,
         SyntaxTree tree,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var hasXmlDoc = member.GetLeadingTrivia()
             .Any(t => t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia));
@@ -444,7 +434,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
         var line = tree.GetLineSpan(member.Span).StartLinePosition.Line + 1;
         var name = GetMemberDisplayName(member);
-        violations.Add($"Line {line}: Public/protected member '{name}' is missing XML doc comment (/// <summary>).");
+        findings.Add("lang-csharp#INST0021", line, $"Public/protected member '{name}' is missing XML doc comment (/// <summary>).");
     }
 
     private static bool IsPublicOrProtected(MemberDeclarationSyntax member)
@@ -479,23 +469,23 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
     private static void AnalyzeSortSystemDirectivesFirst(
         SyntaxNode root,
         SyntaxTree tree,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         if (root is CompilationUnitSyntax compilationUnit)
         {
-            AnalyzeUsingsOrder(compilationUnit.Usings, tree, violations);
+            AnalyzeUsingsOrder(compilationUnit.Usings, tree, findings);
         }
 
         foreach (var namespaceDecl in root.DescendantNodes().OfType<BaseNamespaceDeclarationSyntax>())
         {
-            AnalyzeUsingsOrder(namespaceDecl.Usings, tree, violations);
+            AnalyzeUsingsOrder(namespaceDecl.Usings, tree, findings);
         }
     }
 
     private static void AnalyzeUsingsOrder(
         SyntaxList<UsingDirectiveSyntax> usings,
         SyntaxTree tree,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         var seenNonSystem = false;
 
@@ -518,8 +508,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
             else if (seenNonSystem)
             {
                 var line = tree.GetLineSpan(usingDirective.Span).StartLinePosition.Line + 1;
-                violations.Add(
-                    $"Line {line}: 'using {name}' must come before non-System using directives " +
+                findings.Add("editorconfig#dotnet_sort_system_directives_first", line,
+                    $"'using {name}' must come before non-System using directives " +
                     "(dotnet_sort_system_directives_first = true).");
             }
         }
@@ -530,7 +520,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         SyntaxNode root,
         SyntaxTree tree,
         string preference,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
         {
@@ -541,8 +531,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     if (method.ExpressionBody is not null)
                     {
                         var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Method '{method.Identifier.Text}' uses an expression body; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_methods", line,
+                            $"Method '{method.Identifier.Text}' uses an expression body; " +
                             "prefer a block body (csharp_style_expression_bodied_methods = never).");
                     }
 
@@ -556,8 +546,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                         && body.Statements[0] is ReturnStatementSyntax { Expression: not null })
                     {
                         var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Method '{method.Identifier.Text}' has a single return statement; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_methods", line,
+                            $"Method '{method.Identifier.Text}' has a single return statement; " +
                             "prefer expression-body syntax (csharp_style_expression_bodied_methods = always).");
                     }
 
@@ -571,8 +561,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                         && IsExpressionOnSingleLine(retStmt.Expression, tree))
                     {
                         var line = tree.GetLineSpan(method.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Method '{method.Identifier.Text}' has a single-line return; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_methods", line,
+                            $"Method '{method.Identifier.Text}' has a single-line return; " +
                             "prefer expression-body syntax (csharp_style_expression_bodied_methods = when_on_single_line).");
                     }
 
@@ -589,7 +579,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         SyntaxNode root,
         SyntaxTree tree,
         string preference,
-        List<string> violations)
+        AnalyzerFindings findings)
     {
         foreach (var property in root.DescendantNodes().OfType<PropertyDeclarationSyntax>())
         {
@@ -600,8 +590,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     if (property.ExpressionBody is not null)
                     {
                         var line = tree.GetLineSpan(property.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Property '{property.Identifier.Text}' uses an expression body; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_properties", line,
+                            $"Property '{property.Identifier.Text}' uses an expression body; " +
                             "prefer a block body with a getter accessor (csharp_style_expression_bodied_properties = never).");
                     }
 
@@ -612,8 +602,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                     if (IsGetOnlySingleReturnProperty(property, out _))
                     {
                         var line = tree.GetLineSpan(property.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Property '{property.Identifier.Text}' has a get accessor with a single return; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_properties", line,
+                            $"Property '{property.Identifier.Text}' has a get accessor with a single return; " +
                             "prefer expression-body syntax (csharp_style_expression_bodied_properties = always).");
                     }
 
@@ -625,8 +615,8 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
                         && IsExpressionOnSingleLine(returnExpr, tree))
                     {
                         var line = tree.GetLineSpan(property.Span).StartLinePosition.Line + 1;
-                        violations.Add(
-                            $"Line {line}: Property '{property.Identifier.Text}' has a single-line get return; " +
+                        findings.Add("editorconfig#csharp_style_expression_bodied_properties", line,
+                            $"Property '{property.Identifier.Text}' has a single-line get return; " +
                             "prefer expression-body syntax (csharp_style_expression_bodied_properties = when_on_single_line).");
                     }
 
