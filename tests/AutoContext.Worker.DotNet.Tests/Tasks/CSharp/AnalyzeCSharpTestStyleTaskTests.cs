@@ -456,6 +456,32 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
     }
 
     [Fact]
+    public async Task Should_check_the_file_name_from_the_engine_file_path_argument()
+    {
+        // Arrange — the engine passes `filePath`; the legacy server sent `comparedPath`.
+        var source = """
+            public sealed class UserServiceTests
+            {
+                [Fact]
+                public async Task Should_work()
+                {
+                    Assert.True(true);
+                }
+            }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new Dictionary<string, object> { ["content"] = source, ["filePath"] = "UserService.cs" });
+
+        // Assert
+        Assert.Multiple(() =>
+        {
+            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.Contains("must end with 'Tests' before the extension", result, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task Should_pass_file_name_ending_with_tests()
     {
         // Arrange

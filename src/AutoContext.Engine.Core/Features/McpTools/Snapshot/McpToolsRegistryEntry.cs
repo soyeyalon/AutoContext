@@ -60,4 +60,19 @@ internal sealed record McpToolsRegistryEntry
     /// empty when it consumes none.
     /// </summary>
     public IReadOnlyList<string> Editorconfig { get; init; } = [];
+
+    /// <summary>
+    /// The worker task names the tool runs, in declaration order. A tool
+    /// name is not a task name: one tool may run several worker tasks and
+    /// merge their reports. Empty means the tool's own <see cref="Name"/>
+    /// is its single task; read <see cref="ResolvedTasks"/> rather than
+    /// re-deriving that default.
+    /// </summary>
+    public IReadOnlyList<string> Tasks { get; init; } = [];
+
+    /// <summary>
+    /// The worker task names to dispatch: <see cref="Tasks"/> when declared,
+    /// otherwise the tool's own <see cref="Name"/>.
+    /// </summary>
+    public IReadOnlyList<string> ResolvedTasks => Tasks.Count > 0 ? Tasks : [Name];
 }

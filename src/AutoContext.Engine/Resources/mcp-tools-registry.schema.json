@@ -73,6 +73,16 @@
                         "pattern": "^[a-z][a-z0-9_]*$"
                     },
                     "description": "EditorConfig keys this tool consumes. The engine resolves them and injects the values before dispatching to the worker."
+                },
+                "tasks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "description": "Worker task names this tool runs, in order, on its worker. The engine sends every task the tool's arguments and merges their results into one. Omit when the tool's own name is its single task."
                 }
             }
         },

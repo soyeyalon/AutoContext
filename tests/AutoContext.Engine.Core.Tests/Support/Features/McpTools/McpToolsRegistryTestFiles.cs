@@ -30,6 +30,7 @@ internal static class McpToolsRegistryTestFiles
             {
               "name": "analyze_csharp_code_style",
               "workerId": "dotnet",
+              "tasks": [ "analyze_csharp_coding_style", "analyze_csharp_async_patterns" ],
               "description": "Analyse sample source.",
               "parameters": {
                 "content": { "type": "string", "description": "The source text.", "required": true },

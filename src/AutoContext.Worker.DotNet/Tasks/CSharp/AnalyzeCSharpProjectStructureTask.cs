@@ -17,8 +17,11 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </summary>
 /// <remarks>
 /// Request <c>data</c>:
-/// <c>{ "content": "&lt;csharp-source&gt;", "originalPath": "&lt;path&gt;",
+/// <c>{ "content": "&lt;csharp-source&gt;", "filePath": "&lt;path&gt;",
 /// "editorconfig.csharp_style_namespace_declarations": "file_scoped|block_scoped" }</c><br/>
+/// <c>filePath</c> is the engine's name for the analysed file's path; the
+/// legacy MCP server still sends it as <c>originalPath</c>, which is read when
+/// <c>filePath</c> is absent until that server retires.<br/>
 /// Response <c>output</c>: <c>{ "passed": &lt;bool&gt;, "report": "&lt;text&gt;" }</c>
 /// </remarks>
 internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
@@ -41,8 +44,8 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var originalPath = data.TryGetString("originalPath") ?? string.Empty;
-        var fileName = string.IsNullOrEmpty(originalPath) ? string.Empty : Path.GetFileName(originalPath);
+        var filePath = data.TryGetString("filePath") ?? data.TryGetString("originalPath") ?? string.Empty;
+        var fileName = string.IsNullOrEmpty(filePath) ? string.Empty : Path.GetFileName(filePath);
         var namespacePreference = data.TryGetString("editorconfig.csharp_style_namespace_declarations");
 
         var (passed, report) = await BuildReportAsync(content, fileName, namespacePreference, cancellationToken).ConfigureAwait(false);

@@ -5,6 +5,13 @@
         {
             "name": "analyze_csharp_code_style",
             "workerId": "dotnet",
+            "tasks": [
+                "analyze_csharp_coding_style",
+                "analyze_csharp_member_ordering",
+                "analyze_csharp_naming_conventions",
+                "analyze_csharp_async_patterns",
+                "analyze_csharp_nullable_context"
+            ],
             "description": "Runs the core C# code-quality checks on a single source file and returns one combined report: coding style, member ordering, naming conventions, async/await patterns, and nullable safety. Use this whenever generating, editing, or reviewing C# code. Pass the source as content and, when available, the file's absolute path as filePath so the effective .editorconfig style rules can be resolved and applied. For project-structure rules use analyze_csharp_project_structure; for test-specific rules use analyze_csharp_testing_style.",
             "parameters": {
                 "content": {
@@ -46,6 +53,9 @@
         {
             "name": "analyze_csharp_testing_style",
             "workerId": "dotnet",
+            "tasks": [
+                "analyze_csharp_test_style"
+            ],
             "description": "Checks a single C# test file for test conventions: test class and method naming, no XML doc comments, Assert.Multiple for multi-assertion tests, no ConfigureAwait, and namespace conformance (RootNamespace + folder path within the project). Use this when generating, editing, or reviewing C# test files. Pass the test source as content and the test file's absolute path as filePath (used for the file-name and namespace checks). Also pass projectDirectory (absolute path of the test project's directory) and optionally rootNamespace so the namespace rule can verify the namespace matches RootNamespace + folder path.",
             "parameters": {
                 "content": {
@@ -70,6 +80,9 @@
         {
             "name": "analyze_nuget_references",
             "workerId": "dotnet",
+            "tasks": [
+                "analyze_nuget_hygiene"
+            ],
             "description": "Inspects a .csproj file's PackageReference entries for hygiene issues: duplicate references, floating or wildcard versions (e.g. '*' or version ranges), missing Version attributes (unless Central Package Management is enabled via ManagePackageVersionsCentrally), and packages that have a built-in .NET equivalent. Use this whenever adding, updating, or reviewing NuGet dependencies. Pass the full .csproj XML as content.",
             "parameters": {
                 "content": {
@@ -82,6 +95,10 @@
         {
             "name": "analyze_git_commit_message",
             "workerId": "workspace",
+            "tasks": [
+                "analyze_git_commit_format",
+                "analyze_git_commit_content"
+            ],
             "description": "Validates a Git commit message against project conventions. Covers Conventional Commits format (type, scope, subject, line lengths) and content best practices (no anti-patterns in the body). Use this before creating any commit. Pass the full message — subject and body — as content.",
             "parameters": {
                 "content": {
@@ -94,6 +111,9 @@
         {
             "name": "read_editorconfig_rules",
             "workerId": "workspace",
+            "tasks": [
+                "get_editorconfig_rules"
+            ],
             "description": "Resolves the effective .editorconfig properties for a single file by walking up the directory tree, evaluating glob patterns, and applying section cascading. Returns the final flat key/value map that applies to that file. Use this when you need to know the coding-style rules (indent style, charset, end-of-line, language-specific keys) in force at a particular file path. Pass the file's absolute path as filePath.",
             "parameters": {
                 "filePath": {
@@ -106,6 +126,9 @@
         {
             "name": "analyze_typescript_code_style",
             "workerId": "web",
+            "tasks": [
+                "analyze_typescript_coding_style"
+            ],
             "description": "Runs every enabled TypeScript code-quality check on a single source file and returns one combined report. Flags anti-patterns including any, enums, @ts-ignore, type assertions, non-null assertions, unconstrained generics, and the Function/Object/{} types. Use this whenever generating, editing, or reviewing TypeScript code. Pass the source as content.",
             "parameters": {
                 "content": {

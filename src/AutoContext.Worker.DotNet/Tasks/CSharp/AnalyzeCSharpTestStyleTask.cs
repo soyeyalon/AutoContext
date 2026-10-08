@@ -20,8 +20,11 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// </summary>
 /// <remarks>
 /// Request <c>data</c>:
-/// <c>{ "content": "&lt;csharp-source&gt;", "comparedPath": "&lt;abs-path&gt;",
+/// <c>{ "content": "&lt;csharp-source&gt;", "filePath": "&lt;abs-path&gt;",
 /// "projectDirectory": "&lt;abs-path&gt;", "rootNamespace": "&lt;namespace&gt;" }</c><br/>
+/// <c>filePath</c> is the engine's name for the test file's path; the legacy
+/// MCP server still sends it as <c>comparedPath</c>, which is read when
+/// <c>filePath</c> is absent until that server retires.<br/>
 /// <c>rootNamespace</c> is optional — when omitted the analyzer derives it
 /// from the first <c>*.csproj</c> file found in <c>projectDirectory</c>
 /// (filename without extension), matching MSBuild's default behaviour.<br/>
@@ -47,7 +50,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
             throw new InvalidOperationException("'data.content' must not be empty or whitespace.");
         }
 
-        var comparedPath = data.TryGetString("comparedPath") ?? string.Empty;
+        var comparedPath = data.TryGetString("filePath") ?? data.TryGetString("comparedPath") ?? string.Empty;
         var projectDirectory = data.TryGetString("projectDirectory") ?? string.Empty;
         var rootNamespace = data.TryGetString("rootNamespace") ?? string.Empty;
 

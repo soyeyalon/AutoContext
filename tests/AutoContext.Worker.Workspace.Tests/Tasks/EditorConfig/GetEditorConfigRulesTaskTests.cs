@@ -53,6 +53,21 @@ public sealed class GetEditorConfigRulesTaskTests : IDisposable
     }
 
     [Fact]
+    public async Task Should_resolve_the_engine_file_path_argument()
+    {
+        // Arrange — the engine's read_editorconfig_rules tool passes `filePath`, not `path`.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await _workspace.WriteFileAsync(".editorconfig", "root = true\n\n[*.cs]\nindent_size = 2\n", cancellationToken);
+        var filePath = await _workspace.WriteFileAsync("Foo.cs", string.Empty, cancellationToken);
+
+        // Act
+        var output = await new GetEditorConfigRulesTask().ExecuteAsync(new { filePath });
+
+        // Assert
+        Assert.Equal("2", output.GetProperty("indent_size").GetString());
+    }
+
+    [Fact]
     public async Task Should_throw_when_data_path_missing()
     {
         // Act + Assert

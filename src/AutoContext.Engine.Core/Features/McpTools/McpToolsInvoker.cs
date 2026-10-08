@@ -18,6 +18,13 @@ using Microsoft.Extensions.Logging;
 /// Production <see cref="IMcpToolsInvoker"/> that dispatches one tool call
 /// to the owning worker over the shared request/response pipe contract.
 /// </summary>
+/// <remarks>
+/// A tool name is not a worker task name. Each tool runs the worker tasks
+/// its registry entry lists (<see cref="McpToolsRegistryEntry.ResolvedTasks"/>),
+/// one pipe exchange per task, in order, with the same arguments and
+/// EditorConfig values; <see cref="ComposeResult"/> then merges the replies
+/// into the tool's single result.
+/// </remarks>
 internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
 {
     private const string CorrelationIdPropertyName = "correlationId";
@@ -26,6 +33,8 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
     private const string ErrorPropertyName = "error";
     private const string FilePathPropertyName = "filePath";
     private const string OutputPropertyName = "output";
+    private const string PassedPropertyName = "passed";
+    private const string ReportPropertyName = "report";
     private const string StatusError = "error";
     private const string StatusOk = "ok";
     private const string StatusPropertyName = "status";
@@ -105,17 +114,27 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
                 .EnsureRunningAsync(tool.WorkerId, deadlineCts.Token)
                 .ConfigureAwait(false);
 
-            var requestBytes = BuildRequestBytes(tool.Name, arguments, editorconfig, correlationId);
+            var taskNames = tool.ResolvedTasks;
+            var responses = new List<McpToolsWorkerTaskResponse>(taskNames.Count);
 
-            var exchange = new PipeTransientExchangeClient(_transport, endpoint);
-            await using (exchange.ConfigureAwait(false))
+            foreach (var taskName in taskNames)
             {
-                var responseBytes = await exchange
-                    .ExchangeAsync(requestBytes, deadlineCts.Token)
-                    .ConfigureAwait(false);
+                var requestBytes = BuildRequestBytes(taskName, arguments, editorconfig, correlationId);
 
-                return ParseResponse(tool.Name, responseBytes);
+                var exchange = new PipeTransientExchangeClient(_transport, endpoint);
+                await using (exchange.ConfigureAwait(false))
+                {
+                    var responseBytes = await exchange
+                        .ExchangeAsync(requestBytes, deadlineCts.Token)
+                        .ConfigureAwait(false);
+
+                    var response = ReadResponse(taskName, responseBytes);
+                    LogTaskCompleted(_logger, tool.Name, taskName, response.Status ?? "(missing)", correlationId);
+                    responses.Add(response);
+                }
             }
+
+            return ComposeResult(tool.Name, responses);
         }
         catch (OperationCanceledException) when (
             deadlineCts.IsCancellationRequested
@@ -167,6 +186,80 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         };
 
         return JsonSerializer.SerializeToUtf8Bytes(request, WorkerJsonOptions);
+    }
+
+    /// <summary>
+    /// Merges every worker task's reply into the tool's single result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One reply passes through unchanged: an <c>ok</c> status becomes the
+    /// <c>ok</c> arm carrying the task's output, anything else the
+    /// tool-error arm.
+    /// </para>
+    /// <para>
+    /// Several replies merge. If any task failed, the tool fails and the
+    /// error names every failed task, because a report missing one of its
+    /// checks must not read as clean. Otherwise, when every output is an
+    /// analyzer report (<c>{ passed, report }</c>), the result is one report
+    /// that passes only if every task passed, with the task reports joined
+    /// in task order; any other outputs are returned as one content block
+    /// per task, in task order.
+    /// </para>
+    /// </remarks>
+    /// <param name="toolName">The invoked tool's name.</param>
+    /// <param name="responses">One reply per task, in task order; at least
+    /// one.</param>
+    /// <returns>The tool's result.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="toolName"/> or
+    /// <paramref name="responses"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="responses"/> is
+    /// empty.</exception>
+    internal static JsonMcpToolsInvokeResult ComposeResult(
+        string toolName,
+        IReadOnlyList<McpToolsWorkerTaskResponse> responses)
+    {
+        ArgumentNullException.ThrowIfNull(toolName);
+        ArgumentNullException.ThrowIfNull(responses);
+
+        if (responses.Count == 0)
+        {
+            throw new ArgumentException("A tool invocation must carry at least one task response.", nameof(responses));
+        }
+
+        if (responses.Count == 1)
+        {
+            return ComposeSingle(toolName, responses[0]);
+        }
+
+        var failures = responses
+            .Where(static response => !string.Equals(response.Status, StatusOk, StringComparison.Ordinal))
+            .Select(static response => $"Task '{response.TaskName}' failed: {DescribeFailure(response)}")
+            .ToList();
+
+        if (failures.Count > 0)
+        {
+            return ToolError(toolName, string.Join(Environment.NewLine, failures));
+        }
+
+        var isError = responses.Any(static response => GetIsError(response.Output) == true) ? true : (bool?)null;
+
+        if (TryMergeReports(responses, out var merged))
+        {
+            return new JsonMcpToolsInvokeOkResult
+            {
+                Name = toolName,
+                Content = GetContent(merged, fallbackText: null),
+                IsError = isError,
+            };
+        }
+
+        return new JsonMcpToolsInvokeOkResult
+        {
+            Name = toolName,
+            Content = [.. responses.SelectMany(static response => GetContent(response.Output, fallbackText: null))],
+            IsError = isError,
+        };
     }
 
     /// <summary>
@@ -252,7 +345,40 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         return null;
     }
 
-    private static JsonMcpToolsInvokeResult ParseResponse(string toolName, byte[] responseBytes)
+    private static JsonMcpToolsInvokeResult ComposeSingle(string toolName, McpToolsWorkerTaskResponse response)
+    {
+        if (string.Equals(response.Status, StatusOk, StringComparison.Ordinal))
+        {
+            return new JsonMcpToolsInvokeOkResult
+            {
+                Name = toolName,
+                Content = GetContent(response.Output, fallbackText: null),
+                IsError = GetIsError(response.Output),
+            };
+        }
+
+        if (string.Equals(response.Status, StatusError, StringComparison.Ordinal))
+        {
+            return ToolError(toolName, response.Error, response.Output);
+        }
+
+        return ToolError(toolName, DescribeUnknownStatus(response.Status), response.Output);
+    }
+
+    private static string DescribeFailure(McpToolsWorkerTaskResponse response)
+    {
+        if (!string.Equals(response.Status, StatusError, StringComparison.Ordinal))
+        {
+            return DescribeUnknownStatus(response.Status);
+        }
+
+        return string.IsNullOrWhiteSpace(response.Error) ? "the worker reported failure." : response.Error;
+    }
+
+    private static string DescribeUnknownStatus(string? status)
+        => $"Worker returned unknown status '{status ?? "(missing)"}'.";
+
+    private static McpToolsWorkerTaskResponse ReadResponse(string taskName, byte[] responseBytes)
     {
         using var document = JsonDocument.Parse(responseBytes);
         var root = document.RootElement;
@@ -271,22 +397,46 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
                 ? errorElement.GetString()
                 : null;
 
-        if (string.Equals(status, StatusOk, StringComparison.Ordinal))
+        return new McpToolsWorkerTaskResponse(taskName, status, output, error);
+    }
+
+    /// <summary>
+    /// Merges analyzer reports — outputs shaped <c>{ passed, report }</c> —
+    /// into one report of the same shape. Returns <see langword="false"/>
+    /// when any output has another shape, so the caller keeps them apart.
+    /// </summary>
+    private static bool TryMergeReports(
+        IReadOnlyList<McpToolsWorkerTaskResponse> responses,
+        out JsonElement merged)
+    {
+        var passed = true;
+        var reports = new List<string>(responses.Count);
+
+        foreach (var response in responses)
         {
-            return new JsonMcpToolsInvokeOkResult
+            if (response.Output is not { ValueKind: JsonValueKind.Object } output
+                || !output.TryGetProperty(PassedPropertyName, out var passedElement)
+                || passedElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+                || !output.TryGetProperty(ReportPropertyName, out var reportElement)
+                || reportElement.ValueKind != JsonValueKind.String)
             {
-                Name = toolName,
-                Content = GetContent(output, fallbackText: null),
-                IsError = GetIsError(output),
-            };
+                merged = default;
+                return false;
+            }
+
+            passed &= passedElement.GetBoolean();
+            reports.Add(reportElement.GetString()!);
         }
 
-        if (string.Equals(status, StatusError, StringComparison.Ordinal))
-        {
-            return ToolError(toolName, error, output);
-        }
+        merged = JsonSerializer.SerializeToElement(
+            new JsonObject
+            {
+                [PassedPropertyName] = passed,
+                [ReportPropertyName] = string.Join("\n\n", reports),
+            },
+            WorkerJsonOptions);
 
-        return ToolError(toolName, $"Worker returned unknown status '{status ?? "(missing)"}'.", output);
+        return true;
     }
 
     private static JsonMcpToolsInvokeToolErrorResult ToolError(
@@ -313,4 +463,13 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         string endpoint,
         string reason,
         Exception? exception);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
+        Message = "MCP tool '{ToolName}' ran worker task '{TaskName}': status '{Status}' (correlation '{CorrelationId}')")]
+    private static partial void LogTaskCompleted(
+        ILogger logger,
+        string toolName,
+        string taskName,
+        string status,
+        string correlationId);
 }

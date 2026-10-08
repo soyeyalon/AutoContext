@@ -20,9 +20,12 @@ namespace AutoContext.Engine.Core.Features.McpTools.Format;
 /// at least one entry.</param>
 /// <param name="Editorconfig">The EditorConfig keys the tool consumes, or
 /// <see langword="null"/> when it consumes none.</param>
+/// <param name="Tasks">The worker task names the tool runs, in order, or
+/// <see langword="null"/> when the tool's own name is its single task.</param>
 internal sealed record JsonMcpToolsRegistryTool(
     string? Name = null,
     string? WorkerId = null,
     string? Description = null,
     IReadOnlyDictionary<string, JsonMcpToolsRegistryParameter>? Parameters = null,
-    IReadOnlyList<string>? Editorconfig = null);
+    IReadOnlyList<string>? Editorconfig = null,
+    IReadOnlyList<string>? Tasks = null);

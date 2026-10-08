@@ -81,6 +81,36 @@ public sealed class McpToolsRegistrySchemaValidatorTests
         }
 
         [Fact]
+        public void Should_report_an_empty_task_list()
+        {
+            // Arrange — a declared task list must name at least one task; omit it instead.
+            var registry =
+                """
+                {
+                  "schemaVersion": "1",
+                  "tools": [
+                    {
+                      "name": "analyze_sample_code",
+                      "workerId": "dotnet",
+                      "tasks": [],
+                      "description": "Analyse sample source.",
+                      "parameters": {
+                        "content": { "type": "string", "description": "The source text." }
+                      }
+                    }
+                  ]
+                }
+                """;
+
+            // Act
+            var result = McpToolsRegistrySchemaValidator.Validate(
+                registry, McpToolsRegistryTestFiles.SchemaJson);
+
+            // Assert
+            Assert.False(result.IsValid);
+        }
+
+        [Fact]
         public void Should_report_a_duplicate_tool_name()
         {
             // Arrange — two schema-valid tools share a name.

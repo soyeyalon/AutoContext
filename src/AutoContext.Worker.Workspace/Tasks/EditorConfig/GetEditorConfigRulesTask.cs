@@ -10,7 +10,10 @@ using AutoContext.Workers.Core;
 /// <c>.editorconfig</c> properties for a given file path.
 /// </summary>
 /// <remarks>
-/// Request <c>data</c>:  <c>{ "path": "&lt;abs-path&gt;", "keys": ["k1", "k2", ...] }</c><br/>
+/// Request <c>data</c>:  <c>{ "filePath": "&lt;abs-path&gt;", "keys": ["k1", "k2", ...] }</c><br/>
+/// <c>filePath</c> is the name the engine's <c>read_editorconfig_rules</c> tool
+/// passes; <c>path</c> — sent by the engine's own EditorConfig resolver and by
+/// the legacy MCP server — is read when <c>filePath</c> is absent.<br/>
 /// Response <c>output</c>: flat <c>{ "k1": "v1", ... }</c> map; missing keys are omitted.
 /// </remarks>
 internal sealed class GetEditorConfigRulesTask : IMcpTask
@@ -19,14 +22,11 @@ internal sealed class GetEditorConfigRulesTask : IMcpTask
 
     public Task<JsonElement> ExecuteAsync(JsonElement data, CancellationToken cancellationToken)
     {
-        if (data.ValueKind != JsonValueKind.Object
-            || !data.TryGetProperty("path", out var pathElement)
-            || pathElement.ValueKind != JsonValueKind.String)
-        {
-            throw new InvalidOperationException("'data.path' is required and must be a string.");
-        }
+        var path = (data.ValueKind == JsonValueKind.Object
+                ? TryGetString(data, "filePath") ?? TryGetString(data, "path")
+                : null)
+            ?? throw new InvalidOperationException("'data.filePath' (or 'data.path') is required and must be a string.");
 
-        var path = pathElement.GetString()!;
         var requestedKeys = ReadKeys(data);
 
         var resolved = EditorConfigResolver.Resolve(path);
@@ -73,4 +73,9 @@ internal sealed class GetEditorConfigRulesTask : IMcpTask
 
         return list;
     }
+
+    private static string? TryGetString(JsonElement data, string property)
+        => data.TryGetProperty(property, out var element) && element.ValueKind == JsonValueKind.String
+            ? element.GetString()
+            : null;
 }

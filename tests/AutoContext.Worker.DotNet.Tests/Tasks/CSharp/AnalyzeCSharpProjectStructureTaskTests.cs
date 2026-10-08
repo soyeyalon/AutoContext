@@ -154,6 +154,27 @@ public sealed class AnalyzeCSharpProjectStructureTaskTests
     }
 
     [Fact]
+    public async Task Should_check_the_file_name_from_the_engine_file_path_argument()
+    {
+        // Arrange — the engine passes `filePath`; the legacy server sent `originalPath`.
+        var source = """
+            namespace MyApp.Services;
+
+            public class UserService { }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpProjectStructureTask().GetReportAsync(new Dictionary<string, object> { ["content"] = source, ["filePath"] = "WrongName.cs" });
+
+        // Assert
+        Assert.Multiple(() =>
+        {
+            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.Contains("'WrongName.cs'", result, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task Should_reject_file_name_mismatch()
     {
         // Arrange

@@ -49,6 +49,46 @@ public sealed class McpToolsRegistryLoaderTests
         }
 
         [Fact]
+        public async Task Should_map_declared_worker_tasks_in_order()
+        {
+            // Arrange
+            var directory = tempDirectory.CreateDirectory();
+            McpToolsRegistryTestFiles.WriteValid(directory);
+
+            // Act
+            var registry = await McpToolsRegistryLoader.LoadAsync(
+                directory, TestContext.Current.CancellationToken);
+
+            // Assert
+            var tool = registry.FindByName("analyze_csharp_code_style");
+
+            Assert.NotNull(tool);
+            Assert.Multiple(
+                () => Assert.Equal(["analyze_csharp_coding_style", "analyze_csharp_async_patterns"], tool.Tasks),
+                () => Assert.Equal(["analyze_csharp_coding_style", "analyze_csharp_async_patterns"], tool.ResolvedTasks));
+        }
+
+        [Fact]
+        public async Task Should_resolve_a_tool_without_declared_tasks_to_its_own_name()
+        {
+            // Arrange
+            var directory = tempDirectory.CreateDirectory();
+            McpToolsRegistryTestFiles.WriteValid(directory);
+
+            // Act
+            var registry = await McpToolsRegistryLoader.LoadAsync(
+                directory, TestContext.Current.CancellationToken);
+
+            // Assert
+            var tool = registry.FindByName("read_editorconfig_rules");
+
+            Assert.NotNull(tool);
+            Assert.Multiple(
+                () => Assert.Empty(tool.Tasks),
+                () => Assert.Equal(["read_editorconfig_rules"], tool.ResolvedTasks));
+        }
+
+        [Fact]
         public async Task Should_merge_catalog_category_and_display_description()
         {
             // Arrange

@@ -3,6 +3,7 @@ namespace AutoContext.Engine.Core.Tests.Features.McpTools;
 using System.Text.Json;
 
 using AutoContext.Engine.Core.Features.McpTools;
+using AutoContext.Engine.Protocol.Messages.McpTools;
 
 public sealed class McpToolsInvokerTests
 {
@@ -98,5 +99,140 @@ public sealed class McpToolsInvokerTests
                 () => Assert.Equal(JsonValueKind.Object, editorconfigElement.ValueKind),
                 () => Assert.Empty(editorconfigElement.EnumerateObject()));
         }
+    }
+
+    public sealed class ComposeResult
+    {
+        private const string ToolName = "analyze_sample";
+
+        [Fact]
+        public void Should_pass_a_single_ok_reply_through()
+        {
+            // Arrange
+            var responses = new[] { Ok("task_a", """{"passed":false,"report":"❌ one"}""") };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var ok = Assert.IsType<JsonMcpToolsInvokeOkResult>(result);
+            var report = ReadSingleTextAsJson(ok.Content);
+            Assert.Multiple(
+                () => Assert.Equal(ToolName, ok.Name),
+                () => Assert.False(report.GetProperty("passed").GetBoolean()),
+                () => Assert.Equal("❌ one", report.GetProperty("report").GetString()));
+        }
+
+        [Fact]
+        public void Should_turn_a_single_error_reply_into_a_tool_error()
+        {
+            // Arrange
+            var responses = new[] { new McpToolsWorkerTaskResponse("task_a", "error", null, "Unknown task 'task_a'.") };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var error = Assert.IsType<JsonMcpToolsInvokeToolErrorResult>(result);
+            Assert.Equal("Unknown task 'task_a'.", ReadSingleText(error.Content));
+        }
+
+        [Fact]
+        public void Should_merge_reports_and_pass_only_when_every_task_passed()
+        {
+            // Arrange
+            var responses = new[]
+            {
+                Ok("task_a", """{"passed":true,"report":"✅ first"}"""),
+                Ok("task_b", """{"passed":false,"report":"❌ second"}"""),
+            };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var ok = Assert.IsType<JsonMcpToolsInvokeOkResult>(result);
+            var report = ReadSingleTextAsJson(ok.Content);
+            Assert.Multiple(
+                () => Assert.False(report.GetProperty("passed").GetBoolean()),
+                () => Assert.Equal("✅ first\n\n❌ second", report.GetProperty("report").GetString()));
+        }
+
+        [Fact]
+        public void Should_pass_a_merged_report_when_every_task_passed()
+        {
+            // Arrange
+            var responses = new[]
+            {
+                Ok("task_a", """{"passed":true,"report":"✅ first"}"""),
+                Ok("task_b", """{"passed":true,"report":"✅ second"}"""),
+            };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var report = ReadSingleTextAsJson(Assert.IsType<JsonMcpToolsInvokeOkResult>(result).Content);
+            Assert.True(report.GetProperty("passed").GetBoolean());
+        }
+
+        [Fact]
+        public void Should_fail_the_tool_and_name_every_failed_task()
+        {
+            // Arrange — a report missing one of its checks must not read as clean.
+            var responses = new[]
+            {
+                Ok("task_a", """{"passed":true,"report":"✅ first"}"""),
+                new McpToolsWorkerTaskResponse("task_b", "error", null, "boom"),
+                new McpToolsWorkerTaskResponse("task_c", null, null, null),
+            };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var text = ReadSingleText(Assert.IsType<JsonMcpToolsInvokeToolErrorResult>(result).Content);
+            Assert.Multiple(
+                () => Assert.Contains("Task 'task_b' failed: boom", text, StringComparison.Ordinal),
+                () => Assert.Contains("Task 'task_c' failed: Worker returned unknown status '(missing)'.", text, StringComparison.Ordinal),
+                () => Assert.DoesNotContain("task_a", text, StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Should_keep_outputs_that_are_not_reports_apart_in_task_order()
+        {
+            // Arrange
+            var responses = new[]
+            {
+                Ok("task_a", """{"indent_size":"4"}"""),
+                Ok("task_b", """{"passed":true,"report":"✅ second"}"""),
+            };
+
+            // Act
+            var result = McpToolsInvoker.ComposeResult(ToolName, responses);
+
+            // Assert
+            var ok = Assert.IsType<JsonMcpToolsInvokeOkResult>(result);
+            Assert.Collection(
+                ok.Content,
+                first => Assert.Contains("indent_size", first.GetProperty("text").GetString(), StringComparison.Ordinal),
+                second => Assert.Contains("✅ second", second.GetProperty("text").GetString(), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Should_reject_an_empty_reply_list()
+        {
+            // Act + Assert
+            Assert.Throws<ArgumentException>(() => McpToolsInvoker.ComposeResult(ToolName, []));
+        }
+
+        private static McpToolsWorkerTaskResponse Ok(string taskName, string outputJson)
+            => new(taskName, "ok", JsonDocument.Parse(outputJson).RootElement.Clone(), null);
+
+        private static string ReadSingleText(IReadOnlyList<JsonElement> content)
+            => Assert.Single(content).GetProperty("text").GetString()!;
+
+        private static JsonElement ReadSingleTextAsJson(IReadOnlyList<JsonElement> content)
+            => JsonDocument.Parse(ReadSingleText(content)).RootElement.Clone();
     }
 }

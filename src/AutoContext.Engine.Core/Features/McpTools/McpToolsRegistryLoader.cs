@@ -355,6 +355,7 @@ internal static class McpToolsRegistryLoader
                 catalogTool.Description, $"catalog tool '{name}' description", catalogPath),
             Parameters = parameters,
             Editorconfig = tool.Editorconfig ?? [],
+            Tasks = tool.Tasks ?? [],
             ActivationFlags = flags,
         };
     }

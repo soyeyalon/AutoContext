@@ -29,22 +29,6 @@ using ModelContextProtocol.Protocol;
 [Trait("Category", "Smoke")]
 public sealed class BundledToolsTests
 {
-    /// <summary>
-    /// Tools the engine cannot dispatch yet, each with the reason. The engine
-    /// sends the tool name to the worker as the task name, and these tools'
-    /// tasks are registered under other names. Empty this list as dispatch is
-    /// fixed; a tool left here is called by no assertion.
-    /// </summary>
-    private static readonly Dictionary<string, string> KnownUndispatchable = new(StringComparer.Ordinal)
-    {
-        ["analyze_csharp_code_style"] = "its tasks are analyze_csharp_{coding_style,async_patterns,member_ordering,naming_conventions,nullable_context}",
-        ["analyze_csharp_testing_style"] = "its task is analyze_csharp_test_style",
-        ["analyze_nuget_references"] = "its task is analyze_nuget_hygiene",
-        ["analyze_git_commit_message"] = "its tasks are analyze_git_commit_format and analyze_git_commit_content",
-        ["read_editorconfig_rules"] = "its task is get_editorconfig_rules",
-        ["analyze_typescript_code_style"] = "its task is analyze_typescript_coding_style",
-    };
-
     [Fact]
     public async Task Should_answer_every_registered_tool_with_a_report()
     {
@@ -62,7 +46,7 @@ public sealed class BundledToolsTests
         // Act
         var outcomes = new Dictionary<string, JsonMcpToolsInvokeResult>(StringComparer.Ordinal);
 
-        foreach (var name in registered.Where(name => !KnownUndispatchable.ContainsKey(name)))
+        foreach (var name in registered)
         {
             if (fixtures.TryGetValue(name, out var arguments))
             {
@@ -74,12 +58,42 @@ public sealed class BundledToolsTests
         Assert.Multiple(
             [
                 () => Assert.Empty(registered.Except(fixtures.Keys)),
-                () => Assert.Empty(KnownUndispatchable.Keys.Except(registered)),
                 .. outcomes.Select<KeyValuePair<string, JsonMcpToolsInvokeResult>, Action>(
                     outcome => () => Assert.True(
                         outcome.Value is JsonMcpToolsInvokeOkResult,
                         $"Tool '{outcome.Key}' did not return a report: {Describe(outcome.Value)}")),
             ]);
+    }
+
+    [Fact]
+    public async Task Should_hand_the_file_path_argument_to_the_worker()
+    {
+        // Arrange — a report alone does not prove an argument arrived: a task that
+        // ignores `filePath` still answers. These two tools can only produce the
+        // asserted text by reading the path.
+        var ct = TestContext.Current.CancellationToken;
+        EngineBundlePath.RequireStaged();
+
+        using var cache = IsolatedCacheRoot.Create();
+        using var workspace = WorkspaceTestDirectoryFactory.Create();
+        var mismatchedPath = Path.Combine(workspace.Path, "Gadget.cs");
+        await File.WriteAllTextAsync(mismatchedPath, string.Empty, ct);
+        await File.WriteAllTextAsync(Path.Combine(workspace.Path, ".editorconfig"), "root = true\n\n[*.cs]\nindent_size = 3\n", ct);
+
+        await using var client = await StdioMcpServerClient.CreateFromBundleAsync(workspace.Path, cache.Path, ct);
+
+        // Act
+        var structure = await CallToolAsync(
+            client,
+            "analyze_csharp_project_structure",
+            new() { ["content"] = "namespace Sample;\n\npublic sealed class Widget\n{\n}\n", ["filePath"] = mismatchedPath },
+            ct);
+        var editorconfig = await CallToolAsync(client, "read_editorconfig_rules", new() { ["filePath"] = mismatchedPath }, ct);
+
+        // Assert
+        Assert.Multiple(
+            () => Assert.Contains("Gadget.cs", ReadText(structure), StringComparison.Ordinal),
+            () => Assert.Contains("\"indent_size\":\"3\"", ReadText(editorconfig), StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -116,6 +130,9 @@ public sealed class BundledToolsTests
 
     private static string Describe(JsonMcpToolsInvokeResult result)
         => JsonSerializer.Serialize(result, ProtocolJsonContext.Default.JsonMcpToolsInvokeResult);
+
+    private static string ReadText(JsonMcpToolsInvokeResult result)
+        => Assert.Single(Assert.IsType<JsonMcpToolsInvokeOkResult>(result).Content).GetProperty("text").GetString()!;
 
     private static HashSet<string> ReadRegisteredToolNames(string registryPath)
     {
