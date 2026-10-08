@@ -668,7 +668,7 @@ public sealed class AnalyzeCSharpMemberOrderingTaskTests
     }
 
     [Fact]
-    public async Task Should_reject_non_alphabetical_methods_in_same_group()
+    public async Task Should_suggest_alphabetical_order_for_methods_in_same_group()
     {
         // Arrange
         var source = """
@@ -680,12 +680,13 @@ public sealed class AnalyzeCSharpMemberOrderingTaskTests
             """;
 
         // Act
-        var (_, result) = await new AnalyzeCSharpMemberOrderingTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpMemberOrderingTask().GetReportAsync(new { content = source });
 
         // Assert
         Assert.Multiple(() =>
         {
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.True(passed);
+            Assert.Contains("optional suggestion", result, StringComparison.Ordinal);
             Assert.Contains("alphabetical", result, StringComparison.Ordinal);
             Assert.Contains("Apple", result, StringComparison.Ordinal);
             Assert.Contains("Zebra", result, StringComparison.Ordinal);
@@ -713,7 +714,7 @@ public sealed class AnalyzeCSharpMemberOrderingTaskTests
     }
 
     [Fact]
-    public async Task Should_reject_non_alphabetical_properties_in_same_group()
+    public async Task Should_suggest_alphabetical_order_for_properties_in_same_group()
     {
         // Arrange
         var source = """
@@ -725,12 +726,13 @@ public sealed class AnalyzeCSharpMemberOrderingTaskTests
             """;
 
         // Act
-        var (_, result) = await new AnalyzeCSharpMemberOrderingTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpMemberOrderingTask().GetReportAsync(new { content = source });
 
         // Assert
         Assert.Multiple(() =>
         {
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.True(passed);
+            Assert.Contains("optional suggestion", result, StringComparison.Ordinal);
             Assert.Contains("alphabetical", result, StringComparison.Ordinal);
             Assert.Contains("Age", result, StringComparison.Ordinal);
         });

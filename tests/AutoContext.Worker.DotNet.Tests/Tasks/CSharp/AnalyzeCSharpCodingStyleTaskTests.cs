@@ -1074,7 +1074,7 @@ public sealed class AnalyzeCSharpCodingStyleTaskTests
     }
 
     [Fact]
-    public async Task Should_reject_missing_blank_line_before_switch()
+    public async Task Should_suggest_a_blank_line_before_switch()
     {
         // Arrange
         var source = """
@@ -1100,12 +1100,13 @@ public sealed class AnalyzeCSharpCodingStyleTaskTests
             """;
 
         // Act
-        var (_, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source });
 
         // Assert
         Assert.Multiple(() =>
         {
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.True(passed);
+            Assert.Contains("optional suggestion", result, StringComparison.Ordinal);
             Assert.Contains("blank line", result, StringComparison.Ordinal);
             Assert.Contains("'switch'", result, StringComparison.Ordinal);
         });

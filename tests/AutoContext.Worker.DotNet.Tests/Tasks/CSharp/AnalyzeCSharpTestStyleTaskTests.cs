@@ -77,7 +77,7 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
     }
 
     [Fact]
-    public async Task Should_reject_test_method_without_should_prefix()
+    public async Task Should_suggest_the_should_prefix_for_test_method_names()
     {
         // Arrange
         var source = """
@@ -92,12 +92,13 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
             """;
 
         // Act
-        var (_, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new { content = source });
 
         // Assert
         Assert.Multiple(() =>
         {
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.True(passed);
+            Assert.Contains("optional suggestion", result, StringComparison.Ordinal);
             Assert.Contains("must start with 'Should_'", result, StringComparison.Ordinal);
             Assert.Contains("'TestGetUser'", result, StringComparison.Ordinal);
         });
@@ -206,7 +207,7 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
     }
 
     [Fact]
-    public async Task Should_reject_multiple_asserts_without_assert_multiple()
+    public async Task Should_suggest_assert_multiple_for_multiple_asserts()
     {
         // Arrange
         var source = """
@@ -222,12 +223,13 @@ public sealed class AnalyzeCSharpTestStyleTaskTests
             """;
 
         // Act
-        var (_, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new { content = source });
+        var (passed, result) = await new AnalyzeCSharpTestStyleTask().GetReportAsync(new { content = source });
 
         // Assert
         Assert.Multiple(() =>
         {
-            Assert.StartsWith("❌", result, StringComparison.Ordinal);
+            Assert.True(passed);
+            Assert.Contains("optional suggestion", result, StringComparison.Ordinal);
             Assert.Contains("Assert.Multiple()", result, StringComparison.Ordinal);
             Assert.Contains("2 Assert calls", result, StringComparison.Ordinal);
         });

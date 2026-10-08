@@ -266,7 +266,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
             if (previousLine.Length > 0 && !(previousLine.Length == 1 && previousLine[0] == '{'))
             {
-                findings.Add("lang-csharp#INST0015", lineIndex + 1,
+                findings.Suggest("lang-csharp#INST0015", lineIndex + 1,
                     $"Missing blank line before " +
                     $"'{GetControlFlowKeyword(node)}' statement.");
             }
@@ -301,7 +301,7 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
             if (arrowLine == parentStartLine)
             {
                 var line = arrowLine + 1;
-                findings.Add("lang-csharp#INST0017", line,
+                findings.Suggest("lang-csharp#INST0017", line,
                     $"Expression-body arrow (=>) must be on the next line, " +
                     "not at the end of the signature.");
             }

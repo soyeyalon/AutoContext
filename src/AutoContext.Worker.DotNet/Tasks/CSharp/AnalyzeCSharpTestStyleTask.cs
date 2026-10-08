@@ -290,7 +290,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         if (!name.StartsWith("Should_", StringComparison.Ordinal))
         {
             var line = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1;
-            findings.Add("dotnet-testing#INST0005", line,
+            findings.Suggest("dotnet-testing#INST0005", line,
                 $"Test method '{name}' must start with 'Should_' or 'Should_not_' " +
                 $"(e.g., 'Should_{ToSnakeCase(name)}').");
         }
@@ -335,7 +335,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
         }
 
         var line = tree.GetLineSpan(method.Identifier.Span).StartLinePosition.Line + 1;
-        findings.Add("dotnet-xunit#INST0004", line,
+        findings.Suggest("dotnet-xunit#INST0004", line,
             $"Test method '{method.Identifier.Text}' has {assertCalls.Count} Assert calls " +
             "but does not use Assert.Multiple(). Wrap multiple assertions in Assert.Multiple() " +
             "so all failures are reported together.");

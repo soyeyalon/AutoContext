@@ -143,7 +143,7 @@ internal sealed class AnalyzeCSharpMemberOrderingTask : IMcpTask
                         else if (isStatic == previousIsStatic
                                  && string.Compare(name, previousName, StringComparison.Ordinal) < 0)
                         {
-                            findings.Add("lang-csharp#INST0004", line,
+                            findings.Suggest("lang-csharp#INST0004", line,
                                 $"{typeName}: member '{name}' " +
                                 $"should appear before '{previousName}' (alphabetical order).");
                         }
