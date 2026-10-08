@@ -141,7 +141,7 @@ Two motivating clients, two jobs:
     instructions. This catches turns the prompt-text router
     misses (the user said "fix this" but the agent picked a C#
     analyzer).
-  - **`PostToolUse`** — fires after a tool returns. Two roles:
+  - **`PostToolUse`** — fires after a tool returns. Three roles:
     (a) when the tool wrote to `.autocontext.json` or to a file
     under `<workspace>/.github/instructions/`, the hook calls
     `Engine.Reload()` synchronously so the next turn sees the new
@@ -149,9 +149,33 @@ Two motivating clients, two jobs:
     (b) the hook signals `Agent.ToolUsed(sessionId, toolName, outcome)`
     to the engine, which folds it into a per-session usage histogram
     available via `Diagnostics.Run` for "which tools did this
-    session actually use" reports.
+    session actually use" reports;
+    (c) **verification** — when the tool wrote a workspace file, the
+    hook calls `Discovery.RouteForFile(path)` for the instruction
+    files whose `applyTo` covers that path and the MCP tools those
+    files oblige, invokes each obliged tool through
+    `McpTools.Invoke` on the file's current content, and emits any
+    violations as `additionalContext` so the agent sees the report
+    in the same turn it made the edit. Parameters are filled from
+    the registry's declared parameter names by convention
+    (`content` from the file, `filePath` from the path,
+    `projectDirectory` from the nearest ancestor holding a project
+    file); a tool whose required parameters the hook cannot fill is
+    skipped and logged, never guessed. The hook also signals
+    `Agent.FileTouched(sessionId, path)` so the engine holds the
+    session's touched-file set for the `Stop` backstop. The checks
+    run whether or not the agent remembered the instruction file's
+    `## MCP Tool Validation` section: the section states the
+    obligation, the hook discharges it.
   - **`Stop`** — fires when the agent finishes its turn. The hook
-    flushes any session-scoped client cache it owns, signals
+    reads `Agent.TouchedFiles(sessionId)`, re-runs the obliged tools
+    over every file still in the set, and — on a host whose `Stop`
+    hook can refuse the turn — returns a block decision carrying the
+    aggregated report, so a turn cannot end with a known violation
+    outstanding. A clean run signals `Agent.FilesVerified(sessionId)`,
+    which clears the set. Hosts whose `Stop` cannot refuse still get
+    the `PostToolUse` feedback; the backstop is additive. The hook
+    then flushes any session-scoped client cache it owns, signals
     `Agent.TurnEnded(sessionId)` to the engine, and releases any
     keep-alive grip the hook held on the engine pipe so the
     idle-timeout countdown can begin if no other client is
@@ -305,8 +329,8 @@ are marshalling shims — P1).
 | `Workspace.*` | `Detect`, `Info` |
 | `Logs.*` | `GetEngine`, `TailEngine`, `GetWorker`, `TailWorker` |
 | `McpTools.*` | `List`, `Invoke` (future: `InvokeStream`, `GetDescription`, `SearchByMetadata`, `SearchByContent`) |
-| `Discovery.*` | `RouteForPrompt`, `RouteForTool` |
-| `Agent.*` | `SubagentStarted`, `SubagentStopped`, `Compacted`, `ToolUsed`, `TurnEnded` (all fire-and-forget notifications), `Events.Subscribe` |
+| `Discovery.*` | `RouteForPrompt`, `RouteForTool`, `RouteForFile` |
+| `Agent.*` | `SubagentStarted`, `SubagentStopped`, `Compacted`, `ToolUsed`, `TurnEnded`, `FileTouched`, `FilesVerified` (fire-and-forget notifications), `TouchedFiles` (read), `Events.Subscribe` |
 
 State-bearing reads return discriminated envelopes
 (`ok` / `disabled` / `not-found` / `*-error`) — P2.
@@ -2106,6 +2130,23 @@ way to set it.
   back any future prompt-routing debug client without
   duplicating the scan logic in TypeScript.
 
+  **`RouteForFile(path)`** is the third member, keyed by a workspace
+  file path rather than by prompt text or tool identity. It returns
+  `{ instructions[], tools[] }`: the enabled instruction files whose
+  `applyTo` covers the path (the same extension index, the same
+  coarse match the `Instructions.List` `applyTo` filter applies),
+  and the union of the MCP tools those files oblige — the
+  `mcpTools` the build extracts from each file's
+  `## MCP Tool Validation` section into `instructions-manifest.json`
+  — minus any tool the workspace has disabled. It powers the
+  `PostToolUse` verification role and the `Stop` backstop: the hook
+  knows only that a file was written, and this is how it learns
+  which checks that file owes. A path no file covers yields empty
+  arrays, not an error (P2). Like its siblings it is a read over
+  indices the engine already maintains; the obligations are corpus
+  facts, so the index invalidates with `Instructions.Subscribe`,
+  and the disabled filter with `Config.Subscribe`.
+
   Out of scope for `Discovery.*`: **host-specific tool registration**.
   VS Code Copilot's `vscode.lm.registerTool` LM tools are a registration
   surface specific to the VS Code extension host — Claude Code has no
@@ -3511,6 +3552,17 @@ mutating the manifests.
   the `Instructions.Categories` taxonomy from it per request. The on-disk
   manifest, the engine-internal snapshot, and the wire envelopes are
   three decoupled representations (P3) — none constrains another's shape.
+  The generator also reads `mcp-tools-registry.json` as a
+  **validation input**: every tool an instruction file names in its
+  `## MCP Tool Validation` or `## Workflow MCP Tools Triggers`
+  section must be a registered tool, and every parameter it names
+  there must belong to a tool named in that section, or the build
+  fails with the file and line — the same discipline the
+  `[locator#fragment]` reference resolver applies to rule and
+  section references. The manifest carries each file's resulting
+  `mcpTools` list (the tool names, never the parameters — the
+  registry stays the only statement of a tool's contract) so
+  `Discovery.RouteForFile` can map a path to the checks it owes.
 - **`mcp-tools-catalog.json`** — **hand-authored** activation + UI
   catalog for `McpTools.List`, tracked in source under
   `src/AutoContext.Engine/Resources/`. It is the deliberate complement
@@ -3990,6 +4042,24 @@ Source-side locations for the editable inputs the build consumes:
   and is reaped along with everything else under that subtree
   once `--retention` elapses; it is never streamed via `Logs.*`
   because it is a tombstone, not a tail-able feed.
+- **Corpus drift against the registry.** An instruction file's
+  `## MCP Tool Validation` section is prose the model acts on: it
+  names a tool and the parameters to pass. The registry is the only
+  place a tool's name and parameters are defined, and nothing tied
+  the two together at authoring time — a tool renamed in the
+  registry leaves every section that cited the old name reading
+  naturally and failing silently at the model's end, where "the tool
+  does not exist" degrades into "skip the check". This happened: the
+  engine corpus was copied from the extension's, whose sections named
+  the legacy server's `analyze_csharp_code` and `originalPath`, and
+  the engine registry then renamed them to `analyze_csharp_code_style`
+  and `filePath` without the copy following. Each corpus is bound to
+  the registry of the server that serves it; a copied corpus inherits
+  the old binding silently. `instructions-manifest-gen` therefore validates every
+  tool and parameter token in those sections against the registry
+  and fails the build on a mismatch. Do not loosen the shape rules
+  to let a "nearly right" name through; the model will not
+  fuzzy-match either.
 - **Corpus drift between RIDs.** The corpus is duplicated per RID
   in the packaged artefact. The build must copy from one source
   (`src/AutoContext.Engine/instructions/`) into every RID staging
@@ -4050,6 +4120,14 @@ Shape:
   surface `Engine.Hello` failure as a structured hook error;
   there is no in-hook disk-read fallback (engine and plugin
   ship versioned together inside the plugin root).
+- **Post-migration surface.** With the engine the only reader, the
+  work turns to what the agent experiences: the corpus's tool
+  obligations are validated against the registry at build time; the
+  `PostToolUse` / `Stop` hooks discharge those obligations
+  automatically; checks read the project before judging it; a
+  workspace can author its own instruction files; the plugin ships
+  for hosts without VS Code; and the engine reports what each
+  session actually used.
 
 ## Companion documents
 
