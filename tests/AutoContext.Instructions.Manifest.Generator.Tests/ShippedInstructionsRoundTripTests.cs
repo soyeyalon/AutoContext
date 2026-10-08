@@ -88,4 +88,27 @@ public sealed class ShippedInstructionsRoundTripTests
             Assert.Null(exception);
         }
     }
+
+    public sealed class ToolObligations
+    {
+        private readonly CorpusParser _corpusParser = new();
+        private readonly McpToolsRegistryReader _registryReader = new();
+        private readonly InstructionsToolObligationValidator _sut = new();
+
+        [Fact]
+        public async Task Should_validate_the_shipped_corpus_against_the_shipped_registry()
+        {
+            // Arrange — the regression that catches the next tool or parameter rename.
+            var corpus = await _corpusParser.ParseAsync(EngineInstructionsPath.Value, TestContext.Current.CancellationToken);
+            var registry = _registryReader.Read(Path.Combine(EngineResourcesPath.Value, "mcp-tools-registry.json"));
+
+            // Act
+            var findings = _sut.Validate(corpus, registry);
+
+            // Assert
+            Assert.Multiple(
+                () => Assert.NotEmpty(registry),
+                () => Assert.Empty(findings.Select(static finding => $"{finding.SourceFileName}:{finding.Line + 1} {finding.Message}")));
+        }
+    }
 }

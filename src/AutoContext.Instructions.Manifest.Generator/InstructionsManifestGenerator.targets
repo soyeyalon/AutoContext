@@ -5,7 +5,9 @@
     instruction corpus and the hand-authored Resources/instructions-catalog.json by
     running the AutoContext.Instructions.Manifest.Generator console tool. The
     catalog is a tracked input the generator only reads (to cross-validate it
-    against the corpus); the manifest is the generated output. Imported by
+    against the corpus), as is the hand-authored Resources/mcp-tools-registry.json
+    (to validate the tool names and parameters the corpus cites in its
+    `## MCP Tool Validation` sections); the manifest is the generated output. Imported by
     AutoContext.Engine.csproj because the engine binary host owns the output
     Resources/ folder. The generator assembly is built by the ProjectReference the
     AutoContext.Instructions.Manifest.Generator (ReferenceOutputAssembly=false),
@@ -23,7 +25,7 @@
           AfterTargets="ResolveProjectReferences"
           BeforeTargets="CoreCompile"
           Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(_InstructionsManifestGeneratorAssembly)')">
-    <Exec Command="dotnet &quot;$(_InstructionsManifestGeneratorAssembly)&quot; &quot;$(MSBuildProjectDirectory)\Instructions&quot; &quot;$(MSBuildProjectDirectory)\Resources\instructions-catalog.json&quot; &quot;$(MSBuildProjectDirectory)\Resources\instructions-manifest.json&quot;" />
+    <Exec Command="dotnet &quot;$(_InstructionsManifestGeneratorAssembly)&quot; &quot;$(MSBuildProjectDirectory)\Instructions&quot; &quot;$(MSBuildProjectDirectory)\Resources\instructions-catalog.json&quot; &quot;$(MSBuildProjectDirectory)\Resources\mcp-tools-registry.json&quot; &quot;$(MSBuildProjectDirectory)\Resources\instructions-manifest.json&quot;" />
   </Target>
 
 </Project>

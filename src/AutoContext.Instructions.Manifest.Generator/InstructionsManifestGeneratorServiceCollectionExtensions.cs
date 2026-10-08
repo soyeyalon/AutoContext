@@ -12,9 +12,11 @@ internal static class InstructionsManifestGeneratorServiceCollectionExtensions
     /// Adds <see cref="InstructionsManifestGenerator"/>,
     /// <see cref="ICorpusParser"/>,
     /// <see cref="IInstructionsCatalogReader"/>,
+    /// <see cref="IMcpToolsRegistryReader"/>,
     /// <see cref="IInstructionsManifestBuilder"/>,
-    /// <see cref="IInstructionsManifestSerializer"/>, and
-    /// <see cref="IInstructionsReferenceValidator"/> to
+    /// <see cref="IInstructionsManifestSerializer"/>,
+    /// <see cref="IInstructionsReferenceValidator"/>, and
+    /// <see cref="IInstructionsToolObligationValidator"/> to
     /// <paramref name="services"/>.
     /// </summary>
     /// <param name="services">The service collection to extend.</param>
@@ -27,9 +29,11 @@ internal static class InstructionsManifestGeneratorServiceCollectionExtensions
 
         services.AddSingleton<ICorpusParser, CorpusParser>();
         services.AddSingleton<IInstructionsCatalogReader, InstructionsCatalogReader>();
+        services.AddSingleton<IMcpToolsRegistryReader, McpToolsRegistryReader>();
         services.AddSingleton<IInstructionsManifestBuilder, InstructionsManifestBuilder>();
         services.AddSingleton<IInstructionsManifestSerializer, InstructionsManifestSerializer>();
         services.AddSingleton<IInstructionsReferenceValidator, InstructionsReferenceValidator>();
+        services.AddSingleton<IInstructionsToolObligationValidator, InstructionsToolObligationValidator>();
         services.AddSingleton<InstructionsManifestGenerator>();
 
         return services;
