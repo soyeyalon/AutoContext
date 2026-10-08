@@ -230,6 +230,7 @@ internal static class McpServerHostBuilderExtensions
                 sp.GetRequiredService<PipeTransport>(),
                 options.InstanceId.ToString("D"),
                 sp.GetRequiredService<IEditorConfigResolver>(),
+                sp.GetRequiredService<IConfigSnapshotAccessor>(),
                 sp.GetRequiredService<ILogger<McpToolsInvoker>>());
         });
 

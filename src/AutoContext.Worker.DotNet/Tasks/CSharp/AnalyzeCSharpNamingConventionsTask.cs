@@ -46,7 +46,7 @@ internal sealed class AnalyzeCSharpNamingConventionsTask : IMcpTask
 
         var findings = await AnalyzeAsync(content, cancellationToken).ConfigureAwait(false);
 
-        return findings.ToOutput(PassText, ViolationNoun);
+        return findings.ToOutput(PassText, ViolationNoun, data);
     }
 
     private static async Task<AnalyzerFindings> AnalyzeAsync(string content, CancellationToken cancellationToken)

@@ -96,6 +96,34 @@ public sealed class BundledToolsTests
             () => Assert.Contains("\"indent_size\":\"3\"", ReadText(editorconfig), StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Should_not_report_a_rule_the_workspace_disabled()
+    {
+        // Arrange — the same source breaks two async rules; the workspace switches one off.
+        var ct = TestContext.Current.CancellationToken;
+        EngineBundlePath.RequireStaged();
+
+        using var cache = IsolatedCacheRoot.Create();
+        using var workspace = WorkspaceTestDirectoryFactory.Create();
+        await File.WriteAllTextAsync(
+            Path.Combine(workspace.Path, ".autocontext.json"),
+            """{ "instructions": { "dotnet-async-await.instructions.md": { "disabledRules": [ "INST0007" ] } } }""",
+            ct);
+        const string Source =
+            "namespace Sample;\n\n/// <summary>S.</summary>\npublic sealed class Service\n{\n    /// <summary>R.</summary>\n    public async void Run() { }\n\n    /// <summary>L.</summary>\n    public async Task LoadAsync() { }\n}\n";
+
+        await using var client = await StdioMcpServerClient.CreateFromBundleAsync(workspace.Path, cache.Path, ct);
+
+        // Act
+        var result = await CallToolAsync(client, "analyze_csharp_code_style", new() { ["content"] = Source }, ct);
+
+        // Assert
+        var text = ReadText(result);
+        Assert.Multiple(
+            () => Assert.DoesNotContain("dotnet-async-await#INST0007", text, StringComparison.Ordinal),
+            () => Assert.Contains("dotnet-async-await#INST0002", text, StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// Calls one tool, retrying while the result is not the <c>ok</c> arm: the
     /// first call to each worker cold-spawns it and can lose the worker's

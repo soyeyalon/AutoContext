@@ -3,6 +3,7 @@ namespace AutoContext.Engine.Core.Tests.Features.McpTools;
 using System.Text.Json;
 
 using AutoContext.Engine.Core.Features.McpTools;
+using AutoContext.Engine.Core.Workspace.Config.Snapshot;
 using AutoContext.Engine.Protocol.Messages.McpTools;
 
 public sealed class McpToolsInvokerTests
@@ -59,7 +60,7 @@ public sealed class McpToolsInvokerTests
 
             // Act
             var bytes = McpToolsInvoker.BuildRequestBytes(
-                "analyze_csharp_code_style", arguments, editorconfig, "abc123");
+                "analyze_csharp_code_style", arguments, editorconfig, [], "abc123");
 
             // Assert
             using var document = JsonDocument.Parse(bytes);
@@ -89,6 +90,7 @@ public sealed class McpToolsInvokerTests
                 "analyze_csharp_code_style",
                 arguments,
                 new Dictionary<string, string>(StringComparer.Ordinal),
+                [],
                 "abc123");
 
             // Assert
@@ -97,7 +99,68 @@ public sealed class McpToolsInvokerTests
 
             Assert.Multiple(
                 () => Assert.Equal(JsonValueKind.Object, editorconfigElement.ValueKind),
-                () => Assert.Empty(editorconfigElement.EnumerateObject()));
+                () => Assert.Empty(editorconfigElement.EnumerateObject()),
+                () => Assert.False(document.RootElement.TryGetProperty("disabledRules", out _)));
+        }
+
+        [Fact]
+        public void Should_carry_the_disabled_rules_when_there_are_any()
+        {
+            // Arrange
+            var arguments = JsonDocument.Parse("""{"content":"class C {}"}""").RootElement;
+
+            // Act
+            var bytes = McpToolsInvoker.BuildRequestBytes(
+                "analyze_csharp_code_style",
+                arguments,
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                ["lang-csharp#INST0015", "dotnet-xunit"],
+                "abc123");
+
+            // Assert
+            using var document = JsonDocument.Parse(bytes);
+            Assert.Equal(
+                ["lang-csharp#INST0015", "dotnet-xunit"],
+                document.RootElement.GetProperty("disabledRules").EnumerateArray().Select(static rule => rule.GetString()));
+        }
+    }
+
+    public sealed class CollectDisabledRules
+    {
+        [Fact]
+        public void Should_name_disabled_rules_and_wholly_disabled_files()
+        {
+            // Arrange
+            var config = new ConfigSnapshot
+            {
+                Instructions =
+                [
+                    new ConfigInstructionsFile
+                    {
+                        Name = "lang-csharp.instructions.md",
+                        Rules =
+                        [
+                            new ConfigInstructionsFile.InstructionsRule { Id = "INST0015", Disabled = true },
+                            new ConfigInstructionsFile.InstructionsRule { Id = "INST0017", Disabled = null },
+                        ],
+                    },
+                    new ConfigInstructionsFile { Name = "dotnet-xunit.instructions.md", Disabled = true },
+                    new ConfigInstructionsFile { Name = "not-an-instructions-file.md", Disabled = true },
+                ],
+            };
+
+            // Act
+            var rules = McpToolsInvoker.CollectDisabledRules(config);
+
+            // Assert
+            Assert.Equal(["lang-csharp#INST0015", "dotnet-xunit"], rules);
+        }
+
+        [Fact]
+        public void Should_be_empty_when_nothing_is_disabled()
+        {
+            // Act + Assert
+            Assert.Empty(McpToolsInvoker.CollectDisabledRules(ConfigSnapshot.Empty));
         }
     }
 

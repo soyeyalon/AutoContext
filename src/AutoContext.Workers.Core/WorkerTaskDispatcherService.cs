@@ -33,7 +33,8 @@ using Microsoft.Extensions.Options;
 /// </para>
 /// <para>
 /// Any <c>editorconfig</c> object on the request envelope is flattened into
-/// <c>data</c> as properties prefixed with <c>editorconfig.</c> before the
+/// <c>data</c> as properties prefixed with <c>editorconfig.</c>, and any
+/// <c>disabledRules</c> array is copied into <c>data</c> unchanged, before the
 /// task is invoked, so tasks see a single payload.
 /// </para>
 /// </remarks>
@@ -244,22 +245,33 @@ public sealed partial class WorkerTaskDispatcherService : BackgroundService
         var hasEditorConfig = root.TryGetProperty("editorconfig", out var ec)
             && ec.ValueKind == JsonValueKind.Object;
 
-        if (!hasEditorConfig)
+        var hasDisabledRules = root.TryGetProperty("disabledRules", out var disabledRules)
+            && disabledRules.ValueKind == JsonValueKind.Array;
+
+        if (!hasEditorConfig && !hasDisabledRules)
         {
             return hasData ? dataElement.Clone() : default;
         }
 
-        // Merge editorconfig.<key> properties into data so tasks see a single payload.
+        // Merge editorconfig.<key> properties and the disabled rules into data so tasks see a single payload.
         var merged = hasData
             ? JsonNode.Parse(dataElement.GetRawText()) as JsonObject ?? []
             : [];
 
-        foreach (var prop in ec.EnumerateObject())
+        if (hasEditorConfig)
         {
-            if (prop.Value.ValueKind == JsonValueKind.String)
+            foreach (var prop in ec.EnumerateObject())
             {
-                merged["editorconfig." + prop.Name] = prop.Value.GetString();
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    merged["editorconfig." + prop.Name] = prop.Value.GetString();
+                }
             }
+        }
+
+        if (hasDisabledRules)
+        {
+            merged["disabledRules"] = JsonNode.Parse(disabledRules.GetRawText());
         }
 
         return JsonSerializer.SerializeToElement(merged);

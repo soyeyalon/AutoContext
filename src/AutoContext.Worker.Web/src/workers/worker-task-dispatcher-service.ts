@@ -237,14 +237,17 @@ export class WorkerTaskDispatcherService {
         const data = WorkerTaskDispatcherService.isObject(request['data']) ? { ...request['data'] } : {};
         const ec = request['editorconfig'];
 
-        if (!WorkerTaskDispatcherService.isObject(ec)) {
-            return data;
+        if (WorkerTaskDispatcherService.isObject(ec)) {
+            for (const [key, value] of Object.entries(ec)) {
+                if (typeof value === 'string') {
+                    data[`editorconfig.${key}`] = value;
+                }
+            }
         }
 
-        for (const [key, value] of Object.entries(ec)) {
-            if (typeof value === 'string') {
-                data[`editorconfig.${key}`] = value;
-            }
+        // The rules the workspace switched off travel to the task unchanged.
+        if (Array.isArray(request['disabledRules'])) {
+            data['disabledRules'] = request['disabledRules'];
         }
 
         return data;

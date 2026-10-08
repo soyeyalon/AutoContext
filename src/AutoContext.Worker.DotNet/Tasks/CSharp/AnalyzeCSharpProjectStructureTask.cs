@@ -54,7 +54,7 @@ internal sealed class AnalyzeCSharpProjectStructureTask : IMcpTask
 
         var findings = await AnalyzeAsync(content, fileName, namespacePreference, cancellationToken).ConfigureAwait(false);
 
-        return findings.ToOutput(PassText, ViolationNoun);
+        return findings.ToOutput(PassText, ViolationNoun, data);
     }
 
     private static async Task<AnalyzerFindings> AnalyzeAsync(

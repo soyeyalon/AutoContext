@@ -69,7 +69,22 @@ export class AnalyzerFindings {
         return report;
     }
 
-    toOutput(passText: string, violationNoun: string): AnalyzerOutput {
+    /**
+     * Renders the task output. When `request` carries `disabledRules`,
+     * findings they switch off are left out — a rule id
+     * (`lang-typescript#INST0018`) drops that rule, a bare instructions-file
+     * key (`lang-typescript`) drops every rule of that file — so a check
+     * never reports a rule the user turned off.
+     */
+    toOutput(passText: string, violationNoun: string, request?: Record<string, unknown>): AnalyzerOutput {
+        const disabled = AnalyzerFindings.readDisabledRules(request);
+
+        if (disabled.size > 0) {
+            const kept = new AnalyzerFindings();
+            kept.items.push(...this.items.filter(finding => !AnalyzerFindings.isDisabled(finding.ruleId, disabled)));
+            return kept.toOutput(passText, violationNoun);
+        }
+
         return {
             passed: this.passed,
             report: this.renderReport(passText, violationNoun),
@@ -77,6 +92,16 @@ export class AnalyzerFindings {
                 ? { ruleId: finding.ruleId, severity: finding.severity, message: finding.message }
                 : { ...finding }),
         };
+    }
+
+    private static readDisabledRules(request: Record<string, unknown> | undefined): ReadonlySet<string> {
+        const rules = request?.['disabledRules'];
+        return new Set(Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === 'string' && rule.length > 0) : []);
+    }
+
+    private static isDisabled(ruleId: string, disabled: ReadonlySet<string>): boolean {
+        const separator = ruleId.indexOf('#');
+        return disabled.has(ruleId) || (separator > 0 && disabled.has(ruleId.slice(0, separator)));
     }
 
     private push(finding: AnalyzerFinding): void {

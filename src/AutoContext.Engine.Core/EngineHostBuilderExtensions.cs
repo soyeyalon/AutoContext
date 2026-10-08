@@ -424,6 +424,7 @@ public static class EngineHostBuilderExtensions
                 sp.GetRequiredService<PipeTransport>(),
                 options.InstanceId.ToString("D"),
                 sp.GetRequiredService<IEditorConfigResolver>(),
+                sp.GetRequiredService<IConfigSnapshotAccessor>(),
                 sp.GetRequiredService<ILogger<McpToolsInvoker>>());
         });
 

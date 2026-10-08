@@ -70,7 +70,7 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
         const findings = AnalyzeTypeScriptCodingStyleTask.analyze(content, extension, scriptKind);
         signal.throwIfAborted();
 
-        return findings.toOutput(PASS_TEXT, VIOLATION_NOUN);
+        return findings.toOutput(PASS_TEXT, VIOLATION_NOUN, data);
     }
 
     private static readPath(data: Record<string, unknown>): string | undefined {

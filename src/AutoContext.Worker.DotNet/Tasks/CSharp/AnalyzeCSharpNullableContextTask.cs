@@ -50,7 +50,7 @@ internal sealed class AnalyzeCSharpNullableContextTask : IMcpTask
         var projectKind = CSharpProjectKindResolver.Resolve(data.TryGetString("filePath") ?? data.TryGetString("originalPath"));
         var findings = await AnalyzeAsync(content, projectKind, cancellationToken).ConfigureAwait(false);
 
-        return findings.ToOutput(PassText, ViolationNoun);
+        return findings.ToOutput(PassText, ViolationNoun, data);
     }
 
     private static async Task<AnalyzerFindings> AnalyzeAsync(

@@ -9,6 +9,7 @@ using AutoContext.Workers.Core.Tests.Support;
 
 public sealed class WorkerTaskDispatcherServiceTests
 {
+    private static readonly string[] DisabledRules = ["lang-csharp#INST0015", "dotnet-xunit"];
 
     [Fact]
     public async Task Should_dispatch_request_to_matching_task_and_return_ok_envelope()
@@ -35,6 +36,39 @@ public sealed class WorkerTaskDispatcherServiceTests
                 () => Assert.Equal("ok", response.GetProperty("status").GetString()),
                 () => Assert.Equal(string.Empty, response.GetProperty("error").GetString()),
                 () => Assert.Equal(42, response.GetProperty("output").GetProperty("value").GetInt32()));
+        }
+        finally
+        {
+            await sut.StopAsync(cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task Should_hand_the_disabled_rules_to_the_task()
+    {
+        // Arrange
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var pipeName = $"ac-test-{Guid.NewGuid():N}";
+        using var sut = WorkerTaskDispatcherServiceTestFactory.CreateService(pipeName, [new FakeEchoTask()]);
+        await sut.StartAsync(cancellationToken);
+
+        try
+        {
+            // Act
+            var response = await WorkerDispatcherPipeTestClient.SendAsync(pipeName, new
+            {
+                mcpTask = "echo",
+                data = new { value = 42 },
+                disabledRules = DisabledRules,
+            }, cancellationToken);
+
+            // Assert
+            var output = response.GetProperty("output");
+            Assert.Multiple(
+                () => Assert.Equal(42, output.GetProperty("value").GetInt32()),
+                () => Assert.Equal(
+                    DisabledRules,
+                    output.GetProperty("disabledRules").EnumerateArray().Select(static rule => rule.GetString())));
         }
         finally
         {

@@ -102,6 +102,41 @@ public sealed class AnalyzerFindingsTests
         }
 
         [Fact]
+        public void Should_leave_out_findings_the_request_disables()
+        {
+            // Arrange — one rule disabled by id, another file disabled whole.
+            var findings = new AnalyzerFindings();
+            findings.Add("lang-csharp#INST0005", 3, "No regions.");
+            findings.Add("lang-csharp#INST0021", 5, "Missing docs.");
+            findings.Add("dotnet-xunit#INST0009", 9, "No ConfigureAwait in tests.");
+            var request = JsonDocument.Parse("""{"content":"x","disabledRules":["lang-csharp#INST0005","dotnet-xunit"]}""").RootElement;
+
+            // Act
+            var output = findings.ToOutput("Code style is correct.", "style", request);
+
+            // Assert
+            var ruleIds = output.GetProperty("findings").EnumerateArray().Select(static f => f.GetProperty("ruleId").GetString()).ToList();
+            Assert.Multiple(
+                () => Assert.Equal(["lang-csharp#INST0021"], ruleIds),
+                () => Assert.Contains("Found 1 style violation(s)", output.GetProperty("report").GetString(), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Should_pass_when_every_violation_is_disabled()
+        {
+            // Arrange
+            var findings = new AnalyzerFindings();
+            findings.Add("lang-csharp#INST0005", 3, "No regions.");
+            var request = JsonDocument.Parse("""{"disabledRules":["lang-csharp#INST0005"]}""").RootElement;
+
+            // Act
+            var output = findings.ToOutput("Code style is correct.", "style", request);
+
+            // Assert
+            Assert.True(output.GetProperty("passed").GetBoolean());
+        }
+
+        [Fact]
         public void Should_emit_an_empty_findings_array_when_clean()
         {
             // Act

@@ -77,7 +77,7 @@ internal sealed class AnalyzeNuGetHygieneTask : IMcpTask
         CheckMissingVersions(packages, usesCpm, findings);
         CheckBuiltInAlternatives(packages, findings);
 
-        return Task.FromResult(findings.ToOutput("NuGet hygiene is correct.", "NuGet hygiene"));
+        return Task.FromResult(findings.ToOutput("NuGet hygiene is correct.", "NuGet hygiene", data));
     }
 
     /// <summary>

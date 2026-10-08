@@ -8,6 +8,8 @@ using AutoContext.Engine.Core.Features.McpTools.EditorConfig;
 using AutoContext.Engine.Core.Features.McpTools.Snapshot;
 using AutoContext.Engine.Core.Infrastructure.Diagnostics;
 using AutoContext.Engine.Core.Workers;
+using AutoContext.Engine.Core.Workspace.Config;
+using AutoContext.Engine.Core.Workspace.Config.Snapshot;
 using AutoContext.Engine.Protocol;
 using AutoContext.Engine.Protocol.Messages.McpTools;
 using AutoContext.Framework.Pipes;
@@ -29,10 +31,12 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
 {
     private const string CorrelationIdPropertyName = "correlationId";
     private const string DataPropertyName = "data";
+    private const string DisabledRulesPropertyName = "disabledRules";
     private const string EditorconfigPropertyName = "editorconfig";
     private const string ErrorPropertyName = "error";
     private const string FilePathPropertyName = "filePath";
     private const string FindingsPropertyName = "findings";
+    private const string InstructionsFileSuffix = ".instructions.md";
     private const string OutputPropertyName = "output";
     private const string PassedPropertyName = "passed";
     private const string ReportPropertyName = "report";
@@ -44,6 +48,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
 
     private static readonly JsonSerializerOptions WorkerJsonOptions = CreateWorkerJsonOptions();
 
+    private readonly IConfigSnapshotAccessor _configAccessor;
     private readonly IEditorConfigResolver _editorConfigResolver;
     private readonly string _instanceId;
     private readonly ILogger<McpToolsInvoker> _logger;
@@ -56,8 +61,9 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         PipeTransport transport,
         string instanceId,
         IEditorConfigResolver editorConfigResolver,
+        IConfigSnapshotAccessor configAccessor,
         ILogger<McpToolsInvoker> logger)
-        : this(workerProcessService, transport, instanceId, editorConfigResolver, TimeSpan.FromSeconds(30), logger)
+        : this(workerProcessService, transport, instanceId, editorConfigResolver, configAccessor, TimeSpan.FromSeconds(30), logger)
     {
     }
 
@@ -66,6 +72,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         PipeTransport transport,
         string instanceId,
         IEditorConfigResolver editorConfigResolver,
+        IConfigSnapshotAccessor configAccessor,
         TimeSpan waitDeadline,
         ILogger<McpToolsInvoker> logger)
     {
@@ -81,12 +88,14 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
         ArgumentNullException.ThrowIfNull(editorConfigResolver);
+        ArgumentNullException.ThrowIfNull(configAccessor);
         ArgumentNullException.ThrowIfNull(logger);
 
         _workerProcessService = workerProcessService;
         _transport = transport;
         _instanceId = instanceId;
         _editorConfigResolver = editorConfigResolver;
+        _configAccessor = configAccessor;
         _waitDeadline = waitDeadline;
         _logger = logger;
     }
@@ -116,11 +125,12 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
                 .ConfigureAwait(false);
 
             var taskNames = tool.ResolvedTasks;
+            var disabledRules = CollectDisabledRules(_configAccessor.Current);
             var responses = new List<McpToolsWorkerTaskResponse>(taskNames.Count);
 
             foreach (var taskName in taskNames)
             {
-                var requestBytes = BuildRequestBytes(taskName, arguments, editorconfig, correlationId);
+                var requestBytes = BuildRequestBytes(taskName, arguments, editorconfig, disabledRules, correlationId);
 
                 var exchange = new PipeTransientExchangeClient(_transport, endpoint);
                 await using (exchange.ConfigureAwait(false))
@@ -169,6 +179,7 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
         string taskName,
         JsonElement arguments,
         IReadOnlyDictionary<string, string> editorconfig,
+        IReadOnlyList<string> disabledRules,
         string correlationId)
     {
         var editorconfigObject = new JsonObject();
@@ -186,7 +197,56 @@ internal sealed partial class McpToolsInvoker : IMcpToolsInvoker
             [CorrelationIdPropertyName] = correlationId,
         };
 
+        if (disabledRules.Count > 0)
+        {
+            request[DisabledRulesPropertyName] = new JsonArray([.. disabledRules.Select(static rule => JsonValue.Create(rule))]);
+        }
+
         return JsonSerializer.SerializeToUtf8Bytes(request, WorkerJsonOptions);
+    }
+
+    /// <summary>
+    /// The rules the workspace has switched off, in the form a finding cites
+    /// them: <c>&lt;instructions-file-key&gt;#INST####</c> for a single rule,
+    /// or the bare <c>&lt;instructions-file-key&gt;</c> when the whole file is
+    /// disabled. Workers drop findings that cite any of them, so a check
+    /// never reports a rule the user turned off.
+    /// </summary>
+    /// <param name="config">The workspace configuration.</param>
+    /// <returns>The disabled rules, in configuration order; empty when none.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="config"/> is
+    /// <see langword="null"/>.</exception>
+    internal static IReadOnlyList<string> CollectDisabledRules(ConfigSnapshot config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        var rules = new List<string>();
+
+        foreach (var file in config.Instructions)
+        {
+            if (file.Name is not { } name || !name.EndsWith(InstructionsFileSuffix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var key = name[..^InstructionsFileSuffix.Length];
+
+            if (file.Disabled is true)
+            {
+                rules.Add(key);
+                continue;
+            }
+
+            foreach (var rule in file.Rules)
+            {
+                if (rule.Disabled is true && rule.Id is { } id)
+                {
+                    rules.Add(key + "#" + id);
+                }
+            }
+        }
+
+        return rules;
     }
 
     /// <summary>

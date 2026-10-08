@@ -47,6 +47,27 @@ describe('AnalyzerFindings', () => {
         });
     });
 
+    it('leaves out findings the request disables, by rule or by whole file', () => {
+        const findings = new AnalyzerFindings();
+        findings.add('lang-typescript#INST0005', 1, 'No any.');
+        findings.add('lang-typescript#INST0012', 2, 'No Function.');
+        findings.add('lang-javascript#INST0001', 3, 'Other file.');
+
+        const output = findings.toOutput('ok.', 'TypeScript coding style', {
+            disabledRules: ['lang-typescript#INST0005', 'lang-javascript'],
+        });
+
+        expect.soft(output.findings.map(finding => finding.ruleId)).toEqual(['lang-typescript#INST0012']);
+        expect.soft(output.report).toContain('Found 1 TypeScript coding style violation(s)');
+    });
+
+    it('passes when every violation is disabled', () => {
+        const findings = new AnalyzerFindings();
+        findings.add('lang-typescript#INST0005', 1, 'No any.');
+
+        expect(findings.toOutput('ok.', 'x', { disabledRules: ['lang-typescript#INST0005'] }).passed).toBe(true);
+    });
+
     it('rejects a finding with no rule id', () => {
         expect(() => new AnalyzerFindings().add(' ', 1, 'message')).toThrow(/rule id/);
     });

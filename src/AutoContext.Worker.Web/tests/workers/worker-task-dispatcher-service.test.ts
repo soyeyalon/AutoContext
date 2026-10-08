@@ -166,6 +166,24 @@ describe('WorkerTaskDispatcherService', () => {
         });
     });
 
+    it('hands the disabled rules to the task', async () => {
+        const { pipe } = await startService([new EchoTask()]);
+
+        const response = await sendRequest(pipe, {
+            mcpTask: 'echo',
+            data: { hello: 'world' },
+            disabledRules: ['lang-typescript#INST0018', 'lang-javascript'],
+        });
+
+        expect(response['status']).toBe('ok');
+        expect(response['output']).toEqual({
+            echoed: {
+                hello: 'world',
+                disabledRules: ['lang-typescript#INST0018', 'lang-javascript'],
+            },
+        });
+    });
+
     it('returns an error envelope for an unknown task name', async () => {
         const { pipe } = await startService([new EchoTask()]);
 

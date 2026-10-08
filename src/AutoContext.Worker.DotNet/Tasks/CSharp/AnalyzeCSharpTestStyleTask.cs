@@ -60,7 +60,7 @@ internal sealed class AnalyzeCSharpTestStyleTask : IMcpTask
 
         var findings = await AnalyzeAsync(content, comparedPath, projectDirectory, rootNamespace, cancellationToken).ConfigureAwait(false);
 
-        return findings.ToOutput(PassText, ViolationNoun);
+        return findings.ToOutput(PassText, ViolationNoun, data);
     }
 
     private static async Task<AnalyzerFindings> AnalyzeAsync(

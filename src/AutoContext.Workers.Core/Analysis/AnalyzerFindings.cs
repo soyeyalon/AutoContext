@@ -131,6 +131,65 @@ public sealed class AnalyzerFindings
         return JsonSerializer.SerializeToElement(output);
     }
 
+    /// <summary>
+    /// Renders the task output for a request, leaving out every finding the
+    /// request's <c>disabledRules</c> switches off — a rule id
+    /// (<c>lang-csharp#INST0015</c>) drops that rule, a bare instructions-file
+    /// key (<c>lang-csharp</c>) drops every rule of that file — so a check
+    /// never reports a rule the user turned off.
+    /// </summary>
+    /// <param name="passText">The sentence shown when nothing gates.</param>
+    /// <param name="violationNoun">The noun naming this check's violations.</param>
+    /// <param name="request">The task's request data, which may carry
+    /// <c>disabledRules</c>.</param>
+    /// <returns>The output element.</returns>
+    public JsonElement ToOutput(string passText, string violationNoun, JsonElement request)
+    {
+        var disabled = ReadDisabledRules(request);
+
+        if (disabled.Count == 0)
+        {
+            return ToOutput(passText, violationNoun);
+        }
+
+        var kept = new AnalyzerFindings();
+        kept._items.AddRange(_items.Where(finding => !IsDisabled(finding.RuleId, disabled)));
+
+        return kept.ToOutput(passText, violationNoun);
+    }
+
+    private static bool IsDisabled(string ruleId, HashSet<string> disabled)
+    {
+        if (disabled.Contains(ruleId))
+        {
+            return true;
+        }
+
+        var separator = ruleId.IndexOf('#', StringComparison.Ordinal);
+
+        return separator > 0 && disabled.Contains(ruleId[..separator]);
+    }
+
+    private static HashSet<string> ReadDisabledRules(JsonElement request)
+    {
+        var disabled = new HashSet<string>(StringComparer.Ordinal);
+
+        if (request.ValueKind == JsonValueKind.Object
+            && request.TryGetProperty("disabledRules", out var rules)
+            && rules.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var rule in rules.EnumerateArray())
+            {
+                if (rule.ValueKind == JsonValueKind.String && rule.GetString() is { Length: > 0 } value)
+                {
+                    disabled.Add(value);
+                }
+            }
+        }
+
+        return disabled;
+    }
+
     private static void AppendNumbered(StringBuilder builder, List<AnalyzerFinding> findings)
     {
         for (var index = 0; index < findings.Count; index++)
