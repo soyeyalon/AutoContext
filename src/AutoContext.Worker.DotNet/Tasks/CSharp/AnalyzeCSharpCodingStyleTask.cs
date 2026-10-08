@@ -165,6 +165,12 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
 
         foreach (var node in controlFlowStatements)
         {
+            // `else if` is a chain, not an unbraced body; the nested `if` is checked on its own.
+            if (node is ElseClauseSyntax { Statement: IfStatementSyntax })
+            {
+                continue;
+            }
+
             var embedded = GetEmbeddedStatement(node);
 
             if (embedded is null)
@@ -376,6 +382,12 @@ internal sealed partial class AnalyzeCSharpCodingStyleTask : IMcpTask
         CSharpProjectKind projectKind,
         AnalyzerFindings findings)
     {
+        // Test projects publish no API, and test classes must not carry XML docs at all.
+        if (projectKind == CSharpProjectKind.Test)
+        {
+            return;
+        }
+
         var severity = projectKind == CSharpProjectKind.Application
             ? AnalyzerFindingSeverity.Suggestion
             : AnalyzerFindingSeverity.Violation;

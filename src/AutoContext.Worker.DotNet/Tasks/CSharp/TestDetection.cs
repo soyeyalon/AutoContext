@@ -19,13 +19,18 @@ internal static class TestDetection
     ];
 
     /// <summary>
-    /// Determines whether the given type declaration is a test class by checking
-    /// if any of its methods have a known test attribute.
+    /// Determines whether the given type declaration is a test class: one whose
+    /// methods carry a known test attribute, or one that groups nested test
+    /// classes (e.g. <c>UserServiceTests</c> holding <c>Create</c> and
+    /// <c>Delete</c>).
     /// </summary>
     internal static bool IsTestClass(TypeDeclarationSyntax typeDecl)
         => typeDecl.Members
             .OfType<MethodDeclarationSyntax>()
-            .Any(HasTestAttribute);
+            .Any(HasTestAttribute)
+           || typeDecl.Members
+            .OfType<TypeDeclarationSyntax>()
+            .Any(IsTestClass);
 
     /// <summary>
     /// Determines whether <paramref name="node"/> sits inside a test class,

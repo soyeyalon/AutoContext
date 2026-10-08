@@ -110,7 +110,12 @@ internal sealed class AnalyzeCSharpAsyncPatternsTask : IMcpTask
                 continue;
             }
 
-            if (method.Modifiers.Any(SyntaxKind.OverrideKeyword))
+            // The signature is not the author's to change: an override, an explicit interface
+            // implementation, IAsyncDisposable.DisposeAsync(), or the program entry point.
+            if (method.Modifiers.Any(SyntaxKind.OverrideKeyword)
+                || method.ExplicitInterfaceSpecifier is not null
+                || (method.Identifier.Text == "DisposeAsync" && method.ParameterList.Parameters.Count == 0)
+                || method.Identifier.Text == "Main")
             {
                 continue;
             }

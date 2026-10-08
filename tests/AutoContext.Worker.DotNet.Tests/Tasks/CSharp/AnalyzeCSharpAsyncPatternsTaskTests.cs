@@ -440,4 +440,26 @@ public sealed class AnalyzeCSharpAsyncPatternsTaskTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => new AnalyzeCSharpAsyncPatternsTask().ExecuteAsync(new { content = (string?)null }));
     }
+
+    [Fact]
+    public async Task Should_not_ask_for_a_token_where_the_signature_is_fixed()
+    {
+        // Arrange — IAsyncDisposable, explicit interface implementations, and Main take no token.
+        var source = """
+            public sealed class Connection : IAsyncDisposable, IStartable
+            {
+                public async ValueTask DisposeAsync() { await Task.Yield(); }
+
+                async Task IStartable.StartAsync() { await Task.Yield(); }
+
+                public static async Task Main(string[] args) { await Task.Yield(); }
+            }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpAsyncPatternsTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.DoesNotContain("CancellationToken", result, StringComparison.Ordinal);
+    }
 }

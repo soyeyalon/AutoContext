@@ -2055,4 +2055,60 @@ public sealed class AnalyzeCSharpCodingStyleTaskTests
             () => Assert.False(passed),
             () => Assert.Contains("'Send' is missing XML doc", result, StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task Should_not_require_braces_around_an_else_if_chain()
+    {
+        // Arrange
+        var source = """
+            namespace MyApp;
+
+            internal static class Classifier
+            {
+                public static string Classify(int value)
+                {
+                    if (value < 0)
+                    {
+                        return "negative";
+                    }
+                    else if (value == 0)
+                    {
+                        return "zero";
+                    }
+
+                    return "positive";
+                }
+            }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.DoesNotContain("'else' statement requires curly braces", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Should_not_require_xml_docs_on_a_class_that_groups_nested_tests()
+    {
+        // Arrange
+        var source = """
+            namespace MyApp.Tests;
+
+            public sealed class ParserTests
+            {
+                public sealed class Parse
+                {
+                    [Fact]
+                    public void Should_parse() { }
+                }
+            }
+            """;
+
+        // Act
+        var (_, result) = await new AnalyzeCSharpCodingStyleTask().GetReportAsync(new { content = source });
+
+        // Assert
+        Assert.DoesNotContain("XML doc", result, StringComparison.Ordinal);
+    }
 }
