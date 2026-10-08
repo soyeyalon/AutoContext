@@ -117,6 +117,17 @@ describe('AnalyzeTypeScriptCodingStyleTask', () => {
         expect.soft(report).toContain('return type');
     });
 
+    it('reports each finding with the rule it enforces', async () => {
+        const task = new AnalyzeTypeScriptCodingStyleTask();
+        const output = await task.execute({ content: 'const x: any = 1;\n' }, new AbortController().signal) as {
+            readonly findings: readonly { readonly ruleId: string; readonly line?: number }[];
+        };
+
+        expect(output.findings).toEqual([
+            expect.objectContaining({ ruleId: 'lang-typescript#INST0005', line: 1 }),
+        ]);
+    });
+
     it('throws when data.content is missing', async () => {
         const task = new AnalyzeTypeScriptCodingStyleTask();
         await expect(task.execute({}, new AbortController().signal)).rejects.toThrow(

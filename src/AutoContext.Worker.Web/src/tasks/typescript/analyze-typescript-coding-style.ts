@@ -1,10 +1,9 @@
 import ts from 'typescript';
 import type { McpTask } from '#types/mcp-task.js';
+import { AnalyzerFindings } from '../../analysis/analyzer-findings.js';
 
-interface Violation {
-    readonly line: number;
-    readonly message: string;
-}
+const PASS_TEXT = 'TypeScript coding style is correct.';
+const VIOLATION_NOUN = 'TypeScript coding style';
 
 /**
  * `analyze_typescript_coding_style` — enforces coding-style rules from
@@ -12,10 +11,10 @@ interface Violation {
  * no `as` type assertions, no non-null assertions, no unconstrained
  * generics, no `Function`/`Object`/`{}` types, prefer `interface` over
  * `type` for object shapes, and explicit return types on exported
- * functions.
+ * functions. Each finding names the rule it enforces.
  *
  * Request `data`:   `{ "content": "<typescript-source>" }`
- * Response `output`: `{ "passed": <bool>, "report": "<text>" }`
+ * Response `output`: `{ "passed": <bool>, "report": "<text>", "findings": [...] }`
  */
 export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
     readonly taskName = 'analyze_typescript_coding_style';
@@ -34,14 +33,10 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             throw new Error("'data.content' must not be empty or whitespace.");
         }
 
-        const violations = AnalyzeTypeScriptCodingStyleTask.findViolations(content);
+        const findings = AnalyzeTypeScriptCodingStyleTask.analyze(content);
         signal.throwIfAborted();
-        const passed = violations.length === 0;
-        const report = passed
-            ? '✅ TypeScript Coding Style'
-            : AnalyzeTypeScriptCodingStyleTask.formatReport(violations);
 
-        return { passed, report };
+        return findings.toOutput(PASS_TEXT, VIOLATION_NOUN);
     }
 
     private static lineOf(sourceFile: ts.SourceFile, pos: number): number {
@@ -66,19 +61,21 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             && typeNode.typeName.text === 'const';
     }
 
-    private static checkTsIgnoreComments(sourceFile: ts.SourceFile, violations: Violation[]): void {
+    // @ts-ignore lives in comments, which are not AST nodes, so it is found by pattern.
+    private static checkTsIgnoreComments(sourceFile: ts.SourceFile, findings: AnalyzerFindings): void {
         const text = sourceFile.getFullText();
         const pattern = /\/\/\s*@ts-ignore\b/g;
         let match: RegExpExecArray | null;
         while ((match = pattern.exec(text)) !== null) {
-            violations.push({
-                line: AnalyzeTypeScriptCodingStyleTask.lineOf(sourceFile, match.index),
-                message: 'Use `// @ts-expect-error` instead of `// @ts-ignore` — it errors when the suppression is no longer needed.',
-            });
+            findings.add(
+                'lang-typescript#INST0004',
+                AnalyzeTypeScriptCodingStyleTask.lineOf(sourceFile, match.index),
+                'Use `// @ts-expect-error` instead of `// @ts-ignore` — it errors when the suppression is no longer needed.',
+            );
         }
     }
 
-    private static findViolations(content: string): readonly Violation[] {
+    private static analyze(content: string): AnalyzerFindings {
         const sourceFile = ts.createSourceFile(
             'input.ts',
             content,
@@ -87,141 +84,132 @@ export class AnalyzeTypeScriptCodingStyleTask implements McpTask {
             ts.ScriptKind.TS,
         );
 
-        const violations: Violation[] = [];
-
-        // [typescript INST0004]: @ts-ignore in comments (regex — comments are not AST nodes)
-        AnalyzeTypeScriptCodingStyleTask.checkTsIgnoreComments(sourceFile, violations);
-
-        AnalyzeTypeScriptCodingStyleTask.visit(sourceFile, sourceFile, violations);
-
-        violations.sort((a, b) => a.line - b.line);
-        return violations;
+        const findings = new AnalyzerFindings();
+        AnalyzeTypeScriptCodingStyleTask.checkTsIgnoreComments(sourceFile, findings);
+        AnalyzeTypeScriptCodingStyleTask.visit(sourceFile, sourceFile, findings);
+        return findings;
     }
 
-    private static visit(node: ts.Node, sourceFile: ts.SourceFile, violations: Violation[]): void {
+    private static visit(node: ts.Node, sourceFile: ts.SourceFile, findings: AnalyzerFindings): void {
         const lineOf = AnalyzeTypeScriptCodingStyleTask.lineOf;
 
-        // [typescript INST0011]: enum declarations
         if (ts.isEnumDeclaration(node)) {
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: 'Prefer a `const` object with `as const` and a derived union type instead of `enum`.',
-            });
+            findings.add(
+                'lang-typescript#INST0011',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                'Prefer a `const` object with `as const` and a derived union type instead of `enum`.',
+            );
         }
 
-        // [typescript INST0005]: any type keyword
         if (node.kind === ts.SyntaxKind.AnyKeyword) {
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: 'Avoid `any` — use `unknown` for untyped inputs, proper types for known shapes, or generics for parameterized behavior.',
-            });
+            findings.add(
+                'lang-typescript#INST0005',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                'Avoid `any` — use `unknown` for untyped inputs, proper types for known shapes, or generics for parameterized behavior.',
+            );
         }
 
-        // [typescript INST0012]: Function / Object type references
         if (ts.isTypeReferenceNode(node)) {
             const name = node.typeName.getText(sourceFile);
             if (name === 'Function') {
-                violations.push({
-                    line: lineOf(sourceFile, node.getStart(sourceFile)),
-                    message: 'Avoid `Function` as a type — use a specific function signature instead.',
-                });
+                findings.add(
+                    'lang-typescript#INST0012',
+                    lineOf(sourceFile, node.getStart(sourceFile)),
+                    'Avoid `Function` as a type — use a specific function signature instead.',
+                );
             } else if (name === 'Object') {
-                violations.push({
-                    line: lineOf(sourceFile, node.getStart(sourceFile)),
-                    message: 'Avoid `Object` as a type — use `object`, `Record<string, unknown>`, or a specific interface.',
-                });
+                findings.add(
+                    'lang-typescript#INST0012',
+                    lineOf(sourceFile, node.getStart(sourceFile)),
+                    'Avoid `Object` as a type — use `object`, `Record<string, unknown>`, or a specific interface.',
+                );
             }
         }
 
-        // [typescript INST0012]: {} empty type literal
         if (ts.isTypeLiteralNode(node) && node.members.length === 0) {
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: 'Avoid `{}` as a type — it matches any non-nullish value; use `object` or `Record<string, unknown>` instead.',
-            });
+            findings.add(
+                'lang-typescript#INST0012',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                'Avoid `{}` as a type — it matches any non-nullish value; use `object` or `Record<string, unknown>` instead.',
+            );
         }
 
-        // [typescript INST0010]: type alias with plain object literal → prefer interface
         if (
             ts.isTypeAliasDeclaration(node) &&
             ts.isTypeLiteralNode(node.type) &&
             node.type.members.length > 0
         ) {
             const name = node.name.getText(sourceFile);
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: `Use \`interface ${name}\` instead of \`type ${name} = { ... }\` for object shapes.`,
-            });
+            findings.add(
+                'lang-typescript#INST0010',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                `Use \`interface ${name}\` instead of \`type ${name} = { ... }\` for object shapes.`,
+            );
         }
 
-        // [typescript INST0006]: exported function without return type
         if (
             ts.isFunctionDeclaration(node) &&
             AnalyzeTypeScriptCodingStyleTask.hasExportModifier(node) &&
             !node.type
         ) {
             const name = node.name?.getText(sourceFile) ?? '<anonymous>';
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: `Exported function \`${name}\` should have an explicit return type annotation.`,
-            });
+            findings.add(
+                'lang-typescript#INST0006',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                `Exported function \`${name}\` should have an explicit return type annotation.`,
+            );
         }
 
-        // [typescript INST0006]: exported arrow / function-expression initializers
         if (ts.isVariableStatement(node) && AnalyzeTypeScriptCodingStyleTask.hasExportModifier(node)) {
             for (const decl of node.declarationList.declarations) {
                 const init = decl.initializer;
                 if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && !init.type) {
                     const name = decl.name.getText(sourceFile);
-                    violations.push({
-                        line: lineOf(sourceFile, decl.getStart(sourceFile)),
-                        message: `Exported function \`${name}\` should have an explicit return type annotation.`,
-                    });
+                    findings.add(
+                        'lang-typescript#INST0006',
+                        lineOf(sourceFile, decl.getStart(sourceFile)),
+                        `Exported function \`${name}\` should have an explicit return type annotation.`,
+                    );
                 }
             }
         }
 
-        // [typescript INST0006]: export default arrow / function expression
         if (ts.isExportAssignment(node) && !node.isExportEquals) {
             const expr = node.expression;
             if ((ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) && !expr.type) {
-                violations.push({
-                    line: lineOf(sourceFile, node.getStart(sourceFile)),
-                    message: 'Default-exported function should have an explicit return type annotation.',
-                });
+                findings.add(
+                    'lang-typescript#INST0006',
+                    lineOf(sourceFile, node.getStart(sourceFile)),
+                    'Default-exported function should have an explicit return type annotation.',
+                );
             }
         }
 
-        // [typescript INST0009]: unconstrained generic type parameters
         if (ts.isTypeParameterDeclaration(node) && !node.constraint) {
             const name = node.name.getText(sourceFile);
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: `Generic type parameter \`${name}\` should be constrained with \`extends\`.`,
-            });
+            findings.add(
+                'lang-typescript#INST0009',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                `Generic type parameter \`${name}\` should be constrained with \`extends\`.`,
+            );
         }
 
-        // [typescript INST0018]: as type assertions (skip as const)
         if (ts.isAsExpression(node) && !AnalyzeTypeScriptCodingStyleTask.isConstAssertion(node.type)) {
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: 'Avoid type assertions (`as`) — narrow with `typeof`, `instanceof`, `in`, or type guards instead.',
-            });
+            findings.add(
+                'lang-typescript#INST0018',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                'Avoid type assertions (`as`) — narrow with `typeof`, `instanceof`, `in`, or type guards instead.',
+            );
         }
 
-        // [typescript INST0019]: non-null assertions (!)
         if (ts.isNonNullExpression(node)) {
-            violations.push({
-                line: lineOf(sourceFile, node.getStart(sourceFile)),
-                message: 'Avoid non-null assertions (`!`) — verify nullability with a proper check or type guard.',
-            });
+            findings.add(
+                'lang-typescript#INST0019',
+                lineOf(sourceFile, node.getStart(sourceFile)),
+                'Avoid non-null assertions (`!`) — verify nullability with a proper check or type guard.',
+            );
         }
 
-        ts.forEachChild(node, child => AnalyzeTypeScriptCodingStyleTask.visit(child, sourceFile, violations));
-    }
-
-    private static formatReport(violations: readonly Violation[]): string {
-        const lines = violations.map(v => `  Line ${v.line}: ${v.message}`);
-        return `❌ TypeScript Coding Style\n${lines.join('\n')}`;
+        ts.forEachChild(node, child => AnalyzeTypeScriptCodingStyleTask.visit(child, sourceFile, findings));
     }
 }
