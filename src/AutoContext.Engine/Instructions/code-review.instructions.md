@@ -9,8 +9,10 @@ description: "Apply when reviewing code, auditing a diff, or giving feedback on 
 
 When reviewing changes, ground every finding in tool output where one
 exists:
-- For each touched `.cs` file, call `analyze_csharp_code`.
-- For each touched `.ts`/`.tsx`/`.js`/`.jsx` file, call `analyze_typescript_code`.
+- For each touched `.cs` file, call `analyze_csharp_code_style` and
+  `analyze_csharp_project_structure` (plus `analyze_csharp_testing_style`
+  for test files).
+- For each touched `.ts`/`.tsx`/`.js`/`.jsx` file, call `analyze_typescript_code_style`.
 - For each touched `.csproj`, call `analyze_nuget_references`.
 - For any drafted commit message, call `analyze_git_commit_message`.
 Treat any tool-reported violation as a blocking review finding.

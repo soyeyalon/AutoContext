@@ -9,10 +9,9 @@ applyTo: "**/*.{test,spec,cy}.{js,jsx,ts,tsx,mjs,mts}"
 ## MCP Tool Validation
 
 After editing or generating any TypeScript or JavaScript source file,
-call the `analyze_typescript_code` MCP tool on the changed source.
-Pass the file contents as `content` and the file's absolute path as
-`originalPath`. Treat any reported violation as blocking — fix it
-before reporting the work as done.
+call the `analyze_typescript_code_style` MCP tool on the changed
+source. Pass the file contents as `content`. Treat any reported
+violation as blocking — fix it before reporting the work as done.
 
 ## Rules
 

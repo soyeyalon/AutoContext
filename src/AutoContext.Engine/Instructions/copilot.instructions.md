@@ -65,4 +65,4 @@ When you do one of these tasks, call the listed MCP tool and fix anything it rep
 | Trigger                                                                              | Call                            |
 |--------------------------------------------------------------------------------------|---------------------------------|
 | Drafting a git commit message                                                        | `analyze_git_commit_message`    |
-| Generating, reformatting, or reviewing code (resolve indent, charset, EOL, etc.)     | `read_editorconfig`             |
+| Generating, reformatting, or reviewing code (resolve indent, charset, EOL, etc.)     | `read_editorconfig_rules`       |

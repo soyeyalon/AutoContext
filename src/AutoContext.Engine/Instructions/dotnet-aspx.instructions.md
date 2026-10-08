@@ -14,7 +14,7 @@ No corresponding MCP tool is currently available to automatically
 validate ASP.NET Web Forms markup (`.aspx`, `.ascx`, `.master`) — apply
 these instructions manually. For any C# code-behind files touched in
 the same change, follow the C# instructions and call
-`analyze_csharp_code` on those `.cs` files.
+`analyze_csharp_code_style` on those `.cs` files.
 
 ## Rules
 
